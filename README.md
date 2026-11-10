@@ -79,7 +79,7 @@ npm run build
 npm run preview
 ```
 
-`build`는 타입 검사 후 `dist/`를 생성합니다. `preview`는 [http://127.0.0.1:4173](http://127.0.0.1:4173)에서 빌드 결과를 제공합니다. `test`는 원본 v4 계산 결과와 비교하는 회귀 테스트 6개입니다. 검증 결과는 [검증 기록](docs/VERIFICATION.md)에 정리했습니다.
+`build`는 타입 검사 후 `dist/`를 생성합니다. `preview`는 [http://127.0.0.1:4173](http://127.0.0.1:4173)에서 빌드 결과를 제공합니다. `test`는 원본 v4 계산 결과와 비교하는 회귀 테스트 6개와 API·UI 보존 테스트를 실행합니다. 기존 검증 결과는 [검증 기록](docs/VERIFICATION.md), 추가 검증은 [API 연동 준비](docs/API-DATA-INTEGRATION.md)에 정리했습니다.
 
 ## 실패·병합 시연
 
@@ -99,3 +99,9 @@ npm run preview
 여러 실패 항목은 쉼표로 연결할 수 있습니다. 일부 실패 플래그는 원본과 같이 한 번 사용된 뒤 해제됩니다.
 
 원본 요구사항과 시나리오는 [원본 명세](docs/ORIGINAL_REQUIREMENTS.md)에 보관했습니다.
+
+## API 연동 준비 모듈
+
+기존 화면·지도·시연 데이터는 그대로 두고, `src/api/`에 확정 명세의 요청/응답 타입·mock/http 호출·정상/빈 데이터/오류 목업을 추가했습니다. **기존 화면의 데이터 바인딩은 아직 변경하지 않았으며 환경변수만 바꿔도 실제 API 화면으로 전환되지는 않습니다.** 미제공 정보와 제안 항목 매핑은 확인 후 연결해야 합니다.
+
+사용법, 명세 기준, 남은 결정과 검증 방법은 [API 연동 준비](docs/API-DATA-INTEGRATION.md)를 확인하세요. `npm run typecheck`는 API strict 검사도 실행하며, `npm test`는 기존 계산 6개를 포함한 총 78개 테스트를 실행합니다.
