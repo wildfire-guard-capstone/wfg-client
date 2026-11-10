@@ -238,9 +238,13 @@ export interface WeatherHour {
   precip: number;
 }
 export interface Weather {
-  source: 'KMA_FORECAST' | 'AWS_OBS' | 'FIXED';
+  source: 'KMA_FORECAST' | 'KMA_STATIONS' | 'AWS_OBS' | 'FIXED';
   issued_at: DateTime | null;
-  location: { nx: number; ny: number } | { stn: string } | null;
+  location:
+    | { nx: number; ny: number }
+    | { stn: string }
+    | { lat: number; lon: number }
+    | null;
   hours: WeatherHour[];
 }
 export interface WeatherNow {

@@ -100,8 +100,10 @@ npm run preview
 
 원본 요구사항과 시나리오는 [원본 명세](docs/ORIGINAL_REQUIREMENTS.md)에 보관했습니다.
 
-## API 연동 준비 모듈
+## 기존 화면의 API 데이터 연결
 
-기존 화면·지도·시연 데이터는 그대로 두고, `src/api/`에 확정 명세의 요청/응답 타입·mock/http 호출·정상/빈 데이터/오류 목업을 추가했습니다. **기존 화면의 데이터 바인딩은 아직 변경하지 않았으며 환경변수만 바꿔도 실제 API 화면으로 전환되지는 않습니다.** 미제공 정보와 제안 항목 매핑은 확인 후 연결해야 합니다.
+React 화면·CSS·지도 스타일·그리기 도구를 유지하고, `src/api/`에 확정 명세의 타입·mock/http 호출·정상/빈 값/오류 목업과 기존 runtime의 데이터 연결을 추가했습니다. `VITE_API_MODE` 미설정 시 기존 시연이며, `.env.example`을 `.env.local`로 복사하면 같은 UI에서 API 목업으로 점검할 수 있습니다. HTTP 모드는 실제 서버 주소·테스트 계정이 필요합니다.
 
-사용법, 명세 기준, 남은 결정과 검증 방법은 [API 연동 준비](docs/API-DATA-INTEGRATION.md)를 확인하세요. `npm run typecheck`는 API strict 검사도 실행하며, `npm test`는 기존 계산 6개를 포함한 총 78개 테스트를 실행합니다.
+연결할 수 없는 정보는 `[NULL]`로 표시합니다. 미확정 API, 명세에 없는 필드, 14개 UI 항목과 12개 API 항목의 매핑 차이를 구분했습니다. 전체 공간 레이어 교체와 계정 발급의 관할 ID 등 남은 범위는 [데이터 공백 목록](docs/API-DATA-GAPS.md), 실행·연결 범위·검증은 [API 데이터 연결](docs/API-DATA-INTEGRATION.md)을 확인하세요.
+
+`npm run typecheck`는 API strict 검사도 실행합니다. `npm test`는 기존 계산 6개와 API·데이터 어댑터·UI 보존을 검사하며, `npm run test:browser`로 HTTP 모의 응답을 사용한 화면 흐름을 점검할 수 있습니다. 실제 백엔드 연동 검증 완료를 의미하지 않습니다.

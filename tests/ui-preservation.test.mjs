@@ -12,8 +12,16 @@ const baseline = JSON.parse(
 );
 const root = new URL('../', import.meta.url),
   hash = (value) => createHash('sha256').update(value).digest('hex');
-test('all 34 original source files stay byte-identical to main', () => {
-  for (const [file, expected] of Object.entries(baseline.exact_files))
+test('original components, CSS, map models and scenario stay byte-identical to main', () => {
+  // Only these two existing files may change for approved API data hooks and
+  // nullable response types. The rendering/map functions are guarded below.
+  const dataOnlyFiles = new Set([
+    'src/runtime/createMockRuntime.ts',
+    'src/types/domain.ts',
+  ]);
+  for (const [file, expected] of Object.entries(baseline.exact_files).filter(
+    ([file]) => !dataOnlyFiles.has(file),
+  ))
     assert.equal(
       hash(readFileSync(new URL(file, root))),
       expected,

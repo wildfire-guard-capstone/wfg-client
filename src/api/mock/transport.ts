@@ -34,6 +34,17 @@ export interface MockOptions {
   scenarios?: Partial<Record<ApiId, MockScenario>>;
   latencyMs?: number;
   overrides?: Partial<ResponseMap>;
+  fixtures?: Partial<ResponseMap>;
+  seed?: {
+    incidents: C.Incident[];
+    perimeters: C.Perimeter[];
+    accounts: { user: C.User; password: string }[];
+  };
+  predictionSlices?: (
+    incident: C.Incident,
+    prediction: C.Prediction,
+    perimeter: C.Perimeter,
+  ) => C.PredictionSlices;
 }
 interface Route {
   id: ApiId;
@@ -137,16 +148,31 @@ function paginate<T>(
 
 /** Isolated fetch-compatible mock. It never patches global fetch and never contacts a server. */
 export function createMockFetch(options: MockOptions = {}): Fetcher {
-  const fixture = createFixtures();
+  const fixture = { ...createFixtures(), ...options.fixtures };
   const latency = options.latencyMs ?? 100;
   if (!Number.isFinite(latency) || latency < 0)
     throw new Error('목업 latencyMs는 0 이상이어야 합니다.');
   const incidents = new Map<string, C.Incident>([
     ['100', structuredClone(fixture['INC-03'])],
   ]);
+  if (options.seed) {
+    incidents.clear();
+    for (const i of options.seed.incidents)
+      incidents.set(i.id, structuredClone(i));
+  }
   const perimeters = new Map<string, C.Perimeter[]>([
     ['100', structuredClone(fixture['PER-01'].items)],
   ]);
+  if (options.seed) {
+    perimeters.clear();
+    for (const i of options.seed.incidents)
+      perimeters.set(
+        i.id,
+        structuredClone(
+          options.seed.perimeters.filter((p) => p.incident_id === i.id),
+        ),
+      );
+  }
   const predictions = new Map<string, C.Prediction>([
     ['41', structuredClone(fixture['PRED-02'])],
   ]);
@@ -157,15 +183,24 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
     ],
     ['71', structuredClone(fixture['PROP-03'])],
   ]);
+  if (options.seed) {
+    predictions.clear();
+    proposals.clear();
+  }
   const accounts = new Map(
     MOCK_ACCOUNTS.map((u) => [
       u.login_id,
       { user: structuredClone(u), password: MOCK_PASSWORD },
     ]),
   );
+  if (options.seed) {
+    accounts.clear();
+    for (const account of options.seed.accounts)
+      accounts.set(account.user.login_id, structuredClone(account));
+  }
   const tokens = new Map<string, C.User>();
   const users = structuredClone(fixture['USR-01'].items);
-  const messages = structuredClone(fixture['AI-02'].items);
+  const messages = options.seed ? [] : structuredClone(fixture['AI-02'].items);
   const corrections: C.Correction[] = [];
   const previews = new Map<
     string,
@@ -278,6 +313,14 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
           ).toISOString(),
         })),
       };
+      if (options.predictionSlices)
+        prediction.slices = options
+          .predictionSlices(incident, prediction, perimeter)
+          .features.map((f) => ({
+            hour: f.properties.hour,
+            at: f.properties.at,
+            area_ha: f.properties.area_ha,
+          }));
       predictions.set(prediction.id, prediction);
       predictionId = prediction.id;
       incident.latest_prediction_id = prediction.id;
@@ -734,16 +777,34 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
             (!Number.isInteger(hour) || hour < 1 || hour > 8)
           )
             invalid('hour', '1~8의 시간이 필요합니다.');
-          data = {
-            type: 'FeatureCollection',
-            features: prediction!.slices
-              .filter((s) => hour === null || s.hour === hour)
-              .map((s) => ({
-                type: 'Feature',
-                geometry: mockPolygon(s.hour + 1),
-                properties: { ...s, prediction_id: prediction!.id },
-              })),
-          } satisfies C.PredictionSlices;
+          const predictionPerimeter = perimeters
+            .get(incident!.id)
+            ?.find((p) => p.id === prediction!.perimeter_id);
+          const seeded =
+            options.predictionSlices && predictionPerimeter
+              ? options.predictionSlices(
+                  incident!,
+                  prediction!,
+                  predictionPerimeter,
+                )
+              : undefined;
+          data = seeded
+            ? {
+                ...seeded,
+                features: seeded.features.filter(
+                  (f) => hour === null || f.properties.hour === hour,
+                ),
+              }
+            : ({
+                type: 'FeatureCollection',
+                features: prediction!.slices
+                  .filter((s) => hour === null || s.hour === hour)
+                  .map((s) => ({
+                    type: 'Feature',
+                    geometry: mockPolygon(s.hour + 1),
+                    properties: { ...s, prediction_id: prediction!.id },
+                  })),
+              } satisfies C.PredictionSlices);
           break;
         }
         case 'PRED-04': {
@@ -912,6 +973,23 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
           data = proposal!;
           break;
         case 'PROP-04':
+          if (options.seed) {
+            const siblings = [...proposals.values()].filter(
+              (p) =>
+                predictions.get(p.prediction_id)?.incident_id === incident!.id,
+            );
+            const previous =
+              siblings[siblings.findIndex((p) => p.id === proposal!.id) - 1];
+            data = {
+              ...fixture['PROP-04'],
+              version: proposal!.version,
+              previous_version: previous?.version ?? null,
+              trigger: proposal!.trigger,
+              items: previous ? fixture['PROP-04'].items : [],
+              counts: previous ? fixture['PROP-04'].counts : null,
+            };
+            break;
+          }
           data =
             proposal!.version === 'v1.0'
               ? {
