@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "strict": true },
+  "include": [
+    "src/api/**/*.ts",
+    "src/features/api/**/*.ts",
+    "src/features/api/**/*.tsx",
+    "src/vite-env.d.ts",
+    "tests/api-contract-types.ts"
+  ]
+}
