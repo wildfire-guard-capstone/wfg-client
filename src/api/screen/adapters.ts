@@ -388,24 +388,40 @@ export function versionView(
     ),
   };
 }
+/** risk-2 묶음: 위해 H(기상 · 지형 · 연료 · 규모) · 노출 X(인프라 · 주변 주택) */
+const HAZARD_AXES: readonly string[] = ['weather', 'terrain', 'fuel', 'scale'];
+/** scenario.risk_model.axes에 없는 서버 축(risk-2에서 추가) */
+const EXTRA_AXES: Record<string, string> = { scale: '규모', exposure: '노출' };
+const apiAxis = (key: string) => (key === 'infra' ? 'infrastructure' : key);
+const screenAxis = (key: string) => (key === 'infrastructure' ? 'infra' : key);
+
 export function riskView(raw: C.Risk | null, scenario: Scenario): RiskResult {
+  const split = raw?.combine === 'sqrt_hx';
+  const groupOf = (axis: string): 'H' | 'X' =>
+    HAZARD_AXES.includes(screenAxis(axis)) ? 'H' : 'X';
+  // risk-2는 묶음(H · X)마다 가중치를 다시 나눈다. risk-1은 값이 있는 변수 전체로 나눈다
+  const denominator = (axis: string): number => {
+    if (!raw) return 0;
+    if (!split) return raw.included_weight_sum;
+    const g = groupOf(axis);
+    return raw.factors
+      .filter((f) => f.included && groupOf(f.axis) === g)
+      .reduce((sum, f) => sum + f.weight, 0);
+  };
   const vars =
     raw?.factors.map((f) => {
       const meta = scenario.risk_model.vars.find((v) => v.key === f.code);
+      const den = denominator(f.axis);
       return {
         key: f.code,
-        axis: f.axis === 'infrastructure' ? 'infra' : f.axis,
+        axis: screenAxis(f.axis),
         name: f.name,
         unit: meta?.unit ?? NULL_TEXT,
         w: f.weight,
         mode: meta?.mode ?? '',
         value: f.raw_value,
         grade: f.grade,
-        wn: f.included
-          ? raw.included_weight_sum > 0
-            ? f.weight / raw.included_weight_sum
-            : null
-          : 0,
+        wn: f.included ? (den > 0 ? f.weight / den : null) : 0,
       };
     }) ??
     scenario.risk_model.vars.map((v) => ({
@@ -414,34 +430,41 @@ export function riskView(raw: C.Risk | null, scenario: Scenario): RiskResult {
       grade: null,
       wn: null,
     }));
+  const axes = [
+    ...scenario.risk_model.axes,
+    ...Object.entries(EXTRA_AXES)
+      .filter(([key]) => raw?.factors.some((f) => f.axis === key))
+      .map(([key, name]) => ({ key, name })),
+  ];
+  const ordered = split
+    ? [
+        ...axes.filter((a) => groupOf(a.key) === 'H'),
+        ...axes.filter((a) => groupOf(a.key) === 'X'),
+      ]
+    : axes;
   return {
     score: raw?.status === 'UNAVAILABLE' ? null : raw?.score ?? null,
+    ...(split
+      ? { hazard: raw?.hazard ?? null, exposure: raw?.exposure ?? null }
+      : {}),
     vars,
-    factors: scenario.risk_model.axes.map((axis) => ({
-      key: axis.key,
-      name: axis.name,
-      weight:
-        raw && raw.included_weight_sum > 0
-          ? raw.factors
-              .filter(
-                (f) =>
-                  f.axis ===
-                    (axis.key === 'infra' ? 'infrastructure' : axis.key) &&
-                  f.included,
-              )
-              .reduce((sum, f) => sum + f.weight, 0) / raw.included_weight_sum
-          : null,
-      score:
-        raw?.axes[
-          (axis.key === 'infra' ? 'infrastructure' : axis.key) as C.RiskAxis
-        ] ?? null,
-      n:
-        raw?.factors.filter(
-          (f) =>
-            f.axis === (axis.key === 'infra' ? 'infrastructure' : axis.key) &&
-            f.included,
-        ).length ?? 0,
-    })),
+    factors: ordered.map((axis) => {
+      const den = denominator(axis.key);
+      const included =
+        raw?.factors.filter((f) => f.axis === apiAxis(axis.key) && f.included) ??
+        [];
+      return {
+        key: axis.key,
+        name: axis.name,
+        weight:
+          raw && den > 0
+            ? included.reduce((sum, f) => sum + f.weight, 0) / den
+            : null,
+        score: raw?.axes[apiAxis(axis.key) as C.RiskAxis] ?? null,
+        n: included.length,
+        ...(split ? { group: groupOf(axis.key) } : {}),
+      };
+    }),
     missing:
       raw?.factors.filter((f) => !f.included).map((f) => f.code) ??
       vars.map((v) => v.key),

@@ -577,7 +577,15 @@ export interface RegenerationRequest {
   situation_revision: string;
 }
 
-export type RiskAxis = 'terrain' | 'fuel' | 'weather' | 'infrastructure';
+export type RiskAxis =
+  | 'terrain'
+  | 'fuel'
+  | 'weather'
+  | 'infrastructure'
+  /** risk-2: 산불 규모(P5 면적) — 위해 H 묶음 */
+  | 'scale'
+  /** risk-2: 주변 주택 수(P5 + 1 km) — 노출 X 묶음 */
+  | 'exposure';
 export interface RiskFactor {
   code: string;
   name: string;
@@ -595,9 +603,16 @@ export interface RiskFactor {
 export interface Risk {
   prediction_id: Id;
   status: 'READY' | 'PARTIAL' | 'UNAVAILABLE';
+  /** risk-2: R = √(hazard × exposure). risk-1(명세 7.6): 23개 가중평균 */
   score: number | null;
+  /** risk-2: 위해 H = 기상 · 지형 · 연료 · 규모 가중평균 */
+  hazard?: number | null;
+  /** risk-2: 노출 X = 인프라(취약계층 · 소방서 거리) · 주변 주택 가중평균 */
+  exposure?: number | null;
+  /** risk-2: 'sqrt_hx'. 없으면 risk-1(한 번에 가중평균) */
+  combine?: string;
   grade: string | null;
-  axes: Record<RiskAxis, number | null>;
+  axes: Partial<Record<RiskAxis, number | null>>;
   included_weight_sum: number;
   factors: RiskFactor[];
   method_version: string | null;

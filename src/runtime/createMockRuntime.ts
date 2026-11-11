@@ -42,6 +42,7 @@ import type {
   LngLat,
   ProposalBlock,
   ProposalRun,
+  RiskResult,
 } from '../types/domain';
 
 /* =====================================================================
@@ -2650,6 +2651,27 @@ export function createMockRuntime() {
       : `<span>${numberText(rk.score, 2)}</span>`;
     if ($('#risk-pop').classList.contains('on')) renderRiskPop();
   }
+  // risk-2 묶음 머리 줄: 위해 H(기상·지형·연료·규모) · 노출 X(인프라·노출)
+  function riskGroupRow(rk: RiskResult, group: 'H' | 'X', cols: number) {
+    const label = group === 'H' ? '위해 H' : '노출 X';
+    const score = group === 'H' ? rk.hazard : rk.exposure;
+    return `<tr class="rk-grp"><td colspan="${cols - 1}"><b>${label}</b> <span class="small muted">(${group === 'H' ? '불이 얼마나 위험한가' : '사람·집이 얼마나 걸리는가'})</span></td><td class="num">${riskChip(score ?? null)}</td></tr>`;
+  }
+  // risk-2: 요소 표에 묶음 머리 줄(위해 H · 노출 X)과 식 한 줄을 덧붙인다(기존 표 마크업은 그대로)
+  function addRiskGroups(body: HTMLElement, rk: RiskResult) {
+    rk.factors.forEach((f, i) => {
+      if (!f.group || f.group === rk.factors[i - 1]?.group) return;
+      body
+        .querySelector(`.rk-fac tr[data-axis="${f.key}"]`)
+        ?.insertAdjacentHTML('beforebegin', riskGroupRow(rk, f.group, 3));
+    });
+    body
+      .querySelector('.rk-fac')
+      ?.insertAdjacentHTML(
+        'afterend',
+        `<div class="small muted rk-formula" style="margin-top:4px">산불 위험도 = √(위해 ${numberText(rk.hazard, 2)} × 노출 ${numberText(rk.exposure, 2)}) · 가중치는 묶음 안 비율</div>`,
+      );
+  }
   // 위험도 팝업: 숫자·4요소 점수·가중치 → 「요소별 지표」 팝업(23개 변수 표)
   function renderRiskPop() {
     const st = IS(),
@@ -2678,6 +2700,7 @@ export function createMockRuntime() {
       const indicator = body.querySelector<HTMLElement>('.rk-track i');
       if (indicator) indicator.hidden = rk.score == null;
     }
+    if (rk.hazard !== undefined) addRiskGroups(body, rk);
     $$('#risk-pop-body .rk-fac tr.clickable').forEach(
       (tr) => (tr.onclick = () => openRiskVars(tr.dataset.axis)),
     );
@@ -2696,9 +2719,12 @@ export function createMockRuntime() {
     const rk = riskOf();
     if (!rk) return;
     const rows = rk.factors
-      .map((f) => {
+      .map((f, i) => {
         const vs = rk.vars.filter((v) => v.axis === f.key);
         return (
+          (f.group && f.group !== rk.factors[i - 1]?.group
+            ? riskGroupRow(rk, f.group, 5)
+            : '') +
           `<tr class="grp" id="rv-${f.key}"><td colspan="3"><b>${esc(f.name)}</b> (${vs.length})</td><td class="num">${numberText(f.weight, 3)}</td><td class="num">${riskChip(f.score)}</td></tr>` +
           vs
             .map(
@@ -2716,7 +2742,12 @@ export function createMockRuntime() {
     );
     $('#modal').classList.add('wide');
     $('#modal').scrollTop = 0;
-    if (dataBridge) {
+    if (rk.hazard !== undefined) {
+      // R = √(H × X): 가중치는 묶음마다 합 1이라 전체 합을 보이지 않는다
+      const foot = $('#modal .rv tfoot tr');
+      if (foot)
+        foot.innerHTML = `<td colspan="3"><b>산불 위험도</b> = √(위해 H × 노출 X)</td><td class="num">—</td><td class="num">${riskChip(rk.score)}</td>`;
+    } else if (dataBridge) {
       const weightCell = $('#modal .rv tfoot .num');
       if (weightCell)
         weightCell.textContent = rk.vars.some((v) => v.wn > 0)
