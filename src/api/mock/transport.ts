@@ -528,6 +528,7 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
           'INC-01': page([]),
           'PER-01': page([]),
           'MAP-01': [],
+          'MAP-04': page([]),
           'MAP-02': {
             type: 'FeatureCollection',
             features: [],
@@ -901,6 +902,15 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
           };
           break;
         }
+        case 'MAP-03': {
+          if (!['village', 'facility', 'map_feature', 'resource_base', 'admin_area'].includes(params.entity_type!)) fail(422, 'UNKNOWN_ENTITY_TYPE', '알 수 없는 지도 대상 종류');
+          if (user?.role === 'REPORTER' && params.entity_type === 'resource_base') fail(403, 'FORBIDDEN_ROLE', '기지 조회 권한이 없습니다.');
+          data = { ...fixture['MAP-03'], entity_type: params.entity_type, entity: { ...fixture['MAP-03'].entity, id: params.entity_id } };
+          break;
+        }
+        case 'MAP-04':
+          data = paginate(fixture['MAP-04'].items.filter((area) => (!query.has('level') || area.level === query.get('level')) && (!query.has('parent_id') || area.parent_id === query.get('parent_id')) && (!query.has('q') || area.name.includes(query.get('q')!))), query);
+          break;
         case 'RES-01':
           data = paginate(
             fixture['RES-01'].items.filter(

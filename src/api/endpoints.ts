@@ -93,6 +93,8 @@ export interface ApiContracts {
     },
     C.MapFeatures
   >;
+  'MAP-03': Contract<Read<{ entity_type: C.MapEntityType; entity_id: C.Id }>, C.MapEntityDetail>;
+  'MAP-04': Contract<Read<never, C.PageQuery & { level?: C.AdminLevel; parent_id?: C.Id; q?: string }>, C.Page<C.AdminArea>>;
   'RES-01': Contract<Read<never, ResourceQuery>, C.Page<C.Resource>>;
   'RES-02': Contract<
     Read<
@@ -295,6 +297,20 @@ export const endpoints = {
     path: '/map/layers/{layer_id}/features',
     status: 200,
     roles: mapReaders,
+    priority: 'P1',
+  },
+  'MAP-03': {
+    method: 'GET',
+    path: '/map/entities/{entity_type}/{entity_id}',
+    status: 200,
+    roles: mapReaders,
+    priority: 'P1',
+  },
+  'MAP-04': {
+    method: 'GET',
+    path: '/admin-areas',
+    status: 200,
+    roles: all,
     priority: 'P1',
   },
   'RES-01': {

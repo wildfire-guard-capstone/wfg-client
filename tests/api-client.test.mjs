@@ -74,6 +74,8 @@ const requests = {
   'RISK-01': { path: prediction },
   'WTH-01': { path },
   'MAP-01': {},
+  'MAP-03': { path: { entity_type: 'village', entity_id: '1024' } },
+  'MAP-04': { query: { q: '목업', level: 'EMD' } },
   'MAP-02': {
     path: { layer_id: 'villages' },
     query: { bbox: '128,36,129,37', limit: 500 },
@@ -111,7 +113,7 @@ const requests = {
   },
 };
 const agreed =
-  'AUTH-01 AUTH-02 AUTH-03 USR-01 USR-02 INC-01 INC-02 INC-03 INC-04 PER-01 PER-02 PER-03 PRED-01 PRED-02 PRED-03 PRED-04 PRED-05 RISK-01 WTH-01 MAP-01 MAP-02 BASE-01 RES-01 RES-02 PROP-01 PROP-02 PROP-03 PROP-04 PROP-05 AI-01 AI-02 COR-01 COR-02 LOG-01'.split(
+  'AUTH-01 AUTH-02 AUTH-03 USR-01 USR-02 INC-01 INC-02 INC-03 INC-04 PER-01 PER-02 PER-03 PRED-01 PRED-02 PRED-03 PRED-04 PRED-05 RISK-01 WTH-01 MAP-01 MAP-02 MAP-03 MAP-04 BASE-01 RES-01 RES-02 PROP-01 PROP-02 PROP-03 PROP-04 PROP-05 AI-01 AI-02 COR-01 COR-02 LOG-01'.split(
     ' ',
   );
 const success = (data, status = 200) =>
@@ -131,13 +133,13 @@ const failure = (status, code = 'SERVER_CODE') =>
     { status },
   );
 
-test('source snapshot: exactly the 34 agreed active IDs, P1 12/P2 18/P3 4', () => {
+test('active contracts include confirmed MAP-03/04, P1 14/P2 18/P3 4', () => {
   assert.deepEqual([...API_IDS].sort(), agreed.sort());
   assert.deepEqual(
     ['P1', 'P2', 'P3'].map(
       (p) => API_IDS.filter((id) => endpoints[id].priority === p).length,
     ),
-    [12, 18, 4],
+    [14, 18, 4],
   );
   assert.deepEqual(Object.keys(createFixtures()).sort(), agreed);
 });

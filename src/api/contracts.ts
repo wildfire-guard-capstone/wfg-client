@@ -320,6 +320,11 @@ export interface MapFeature {
   geometry: Geometry;
   attrs: JsonObject;
 }
+export type MapEntityType = 'village' | 'facility' | 'map_feature' | 'resource_base' | 'admin_area';
+export interface MapEntityDetail {
+  entity_type: MapEntityType;
+  entity: Village | Facility | MapFeature | ResourceBase | AdminArea;
+}
 export type MapProperties =
   | AdminArea
   | (Omit<Village, 'geometry' | 'label_point'> & { label_point?: Point })

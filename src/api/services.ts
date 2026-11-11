@@ -33,7 +33,7 @@ export function createApiServices(client: ApiClient) {
     },
     risk: { get: bind('RISK-01') },
     weather: { now: bind('WTH-01') },
-    map: { layers: bind('MAP-01'), features: bind('MAP-02') },
+    map: { layers: bind('MAP-01'), features: bind('MAP-02'), entity: bind('MAP-03'), adminAreas: bind('MAP-04') },
     resources: {
       list: bind('RES-01'),
       summary: bind('RES-02'),
