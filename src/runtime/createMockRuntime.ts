@@ -4855,6 +4855,7 @@ export function createMockRuntime() {
     if (!dataBridge) return;
     const pending = dataBridge.pendingIncident();
     const operation = dataBridge.predictionOperation();
+    if ($('#prop-meta')) $('#prop-meta').title = dataBridge.proposalStale() ? '이 제안은 최신 예측 또는 현재 정정을 아직 반영하지 않았습니다.' : '';
     const predictionFailure = dataBridge.predictionFailure();
     if (!pending && state.role !== 'reporter' && inc().status !== '종료') {
       const note = $('#pred-note');
@@ -5234,6 +5235,10 @@ export function createMockRuntime() {
         diff: showDiff,
         issued: (account, password) =>
           showIssued('계정 발급 완료', account, password),
+        proposalSelected: () => {
+          showTab('proposal');
+          $('#ipt-proposal').closest('.sp-body').scrollTop = 0;
+        },
       },
       { accountAdminAreaId: import.meta.env.VITE_ACCOUNT_ADMIN_AREA_ID },
     );

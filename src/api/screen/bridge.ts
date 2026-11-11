@@ -51,6 +51,7 @@ export interface ScreenHost {
   modal: (title: string, body: string, actions: ModalAction[]) => void;
   diff: (before: ProposalRun, after: ProposalRun) => void;
   issued: (account: Account, password: string) => void;
+  proposalSelected?: () => void;
 }
 const input = (id: string) =>
   (document.getElementById(id) as HTMLInputElement).value.trim();
@@ -76,6 +77,7 @@ export function createScreenBridge(
   const snapshot = new Map<string, IncidentData>();
   const versions = new Map<string, C.ProposalVersion[]>();
   const predictionOperations = new Map<string, C.Operation>();
+  let proposalTicket = 0;
   const requests = new Set<AbortController>();
   const incidentSummaries = new Map<string, C.IncidentSummary>();
   let listStatus: 'not-requested' | 'loading' | 'ready' | 'error' =
@@ -120,6 +122,7 @@ export function createScreenBridge(
   function reset() {
     generation++;
     selection++;
+    proposalTicket++;
     for (const c of requests) c.abort();
     requests.clear();
     selectionRequest?.abort();
@@ -640,21 +643,20 @@ export function createScreenBridge(
     }
   }
   async function viewVersion(version: string) {
+    if (pendingIncident || state.role !== 'commander') return;
     const run = IS().runs.find((r) => r.id === version);
     if (!run?.apiId) return;
     const id = state.incId;
+    const ticket = ++proposalTicket, selected = selection;
     await task(async (signal, epoch) => {
-      const proposal = await source.api.proposals.get({
-        path: { incident_id: id, proposal_id: run.apiId! },
-        signal,
-      });
+      const proposal = await source.proposal(id, run.apiId!, signal);
       const prediction = await remote(() =>
         source.api.predictions.get({
           path: { incident_id: id, prediction_id: proposal.prediction_id },
           signal,
         }),
       );
-      if (alive(epoch) && state.incId === id) {
+      if (alive(epoch) && state.incId === id && selection === selected && ticket === proposalTicket && !pendingIncident) {
         const p = prediction.status === 'ready' ? prediction.data : null;
         const loaded = proposalView(
           proposal,
@@ -667,35 +669,32 @@ export function createScreenBridge(
         Object.assign(run, loaded);
         IS().viewRun = run;
         host.refresh();
+        host.proposalSelected?.();
       }
     });
   }
   async function compare(run: ProposalRun) {
-    if (!run.apiId) return;
+    if (!run.apiId || pendingIncident || state.role !== 'commander') return;
     const id = state.incId;
+    const ticket = ++proposalTicket, selected = selection;
     await task(async (signal, epoch) => {
       const diff = await source.api.proposals.diff({
         path: { incident_id: id, proposal_id: run.apiId! },
         signal,
       });
+      if (diff.version !== run.id) throw new Error('[필요한 정보: 선택한 제안 버전과 일치하는 비교 응답]');
       const previous = versions
         .get(id)
         ?.find((v) => v.version === diff.previous_version);
       if (!previous) {
-        host.notice(`${NULL_TEXT} 비교할 이전 버전이 없습니다.`);
+        if (alive(epoch) && ticket === proposalTicket && selection === selected && state.incId === id) host.notice('비교할 이전 버전이 없습니다.');
         return;
       }
       const [before, after] = await Promise.all([
-        source.api.proposals.get({
-          path: { incident_id: id, proposal_id: previous.id },
-          signal,
-        }),
-        source.api.proposals.get({
-          path: { incident_id: id, proposal_id: run.apiId! },
-          signal,
-        }),
+        source.proposal(id, previous.id, signal),
+        source.proposal(id, run.apiId!, signal),
       ]);
-      if (!alive(epoch) || state.incId !== id) return;
+      if (!alive(epoch) || state.incId !== id || selection !== selected || ticket !== proposalTicket || pendingIncident) return;
       const a = proposalView(before, S, null),
         b = proposalView(after, S, null);
       b.changed = Object.entries(UI_TO_API_ITEM)
@@ -1075,6 +1074,10 @@ export function createScreenBridge(
     weather: () => currentWeather,
     predictionOperation: () => predictionOperations.get(state.incId),
     predictionFailure: () => errors.get(`${state.incId}.predict`),
+    proposalStale: () => {
+      const data = snapshot.get(state.incId);
+      return !!data && (data.incident.proposal_stale || (data.proposal.status === 'ready' && !!data.proposal.data && data.proposal.data.prediction_id !== (data.prediction.status === 'ready' ? data.prediction.data.id : data.incident.latest_prediction_id)));
+    },
     predictionAt: (hour: number) => {
       const data = snapshot.get(state.incId);
       if (data?.prediction.status !== 'ready') return null;

@@ -300,8 +300,8 @@ export function proposalView(
       ...base,
       targets: [NULL_TEXT],
       conflicts: [],
-      withheld: [],
       apiItemCode: item.item_code,
+      withheld: (item.withheld ?? []).map(value => ({ slot: value.field, why: value.reason })),
       apiMissing: item.state === 'FAILED',
       status:
         item.state === 'NOT_TRIGGERED'

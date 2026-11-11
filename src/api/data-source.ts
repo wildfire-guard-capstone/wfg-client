@@ -5,6 +5,7 @@ import { createIdempotencyKey } from './client.ts';
 import { createApiServices } from './services.ts';
 import { waitForOperation, validateOperation } from './operations.ts';
 import { validatePrediction, validateSlices, validateRisk } from './screen/predictions.ts';
+import { validateProposal } from './screen/proposals.ts';
 import type { IncidentDirectory } from './screen/incidents.ts';
 import { ApiError } from './errors.ts';
 
@@ -159,7 +160,7 @@ export function createApiDataSource(client: ApiClient) {
           ? remote(async () => validateRisk(await api.risk.get({ path: predictionPath, signal }), predictionPath.prediction_id))
           : skipped,
         role === 'COMMANDER'
-          ? remote(() => api.proposals.latest({ path, signal }))
+          ? remote(async () => validateProposal(await api.proposals.latest({ path, signal })))
           : skipped,
       ]);
     signal?.throwIfAborted();
@@ -226,6 +227,8 @@ export function createApiDataSource(client: ApiClient) {
     predict,
     listIncidents,
     incidentDirectory,
+    proposal: async (incidentId: Id, proposalId: Id, signal?: AbortSignal) =>
+      validateProposal(await api.proposals.get({ path: { incident_id: incidentId, proposal_id: proposalId }, signal }), proposalId)!,
     adminAreas: (query: RequestFor<'MAP-04'>['query'] = {}, signal?: AbortSignal) =>
       allPages((cursor) => api.map.adminAreas({ query: { ...query, cursor, limit: 100 }, signal })),
     async mapWindow(bbox: string, signal?: AbortSignal) {
