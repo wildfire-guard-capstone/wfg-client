@@ -266,20 +266,23 @@ test('AI correction stays unsaved until confirmation and polls the returned rege
   expect(errors).toEqual([]);
 });
 
-test('administrator controls remain; unconfirmed writes and missing issuance jurisdiction never fake success', async ({
+test('administrator controls reset real account passwords; missing issuance jurisdiction never fakes success', async ({
   page,
 }) => {
   const { calls, errors } = await server(page);
   await login(page, 'admin');
   await page.locator('[data-reissue]').first().click();
-  await expect(page.locator('#sys-alert')).toContainText('[NULL]');
+  await expect(page.locator('#modal-title')).toHaveText('초기 비밀번호 재발급');
+  await expect(page.locator('#modal-body')).toContainText('mock-reset-');
+  expect(calls.filter(c => c.method === 'POST' && /\/admin\/users\/[^/]+\/password-reset$/.test(new URL(c.url).pathname))).toHaveLength(1);
+  await page.locator('#modal-actions button').filter({ hasText: '닫기' }).click();
   await page.locator('#ac-name').fill('테스트 계정');
   await page.locator('#ac-org').fill('테스트 기관');
   await page.locator('#ac-role').selectOption('viewer');
   await page.locator('#ac-add').click();
   await expect(page.locator('#sys-alert')).toContainText('admin_area_id');
   expect(
-    calls.filter((c) => c.url.includes('/admin/') && c.method !== 'GET'),
+    calls.filter((c) => c.url.includes('/admin/') && c.method !== 'GET' && !c.url.endsWith('/password-reset')),
   ).toHaveLength(0);
   expect(errors).toEqual([]);
 });
