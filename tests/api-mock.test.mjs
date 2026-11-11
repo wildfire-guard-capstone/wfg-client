@@ -271,21 +271,26 @@ test('failed prediction retains previous results; aborted polling does not start
   assert.equal(after.running_operation_id, null);
 });
 
-test('mock risk retains nulls, all 23 factors and fractional grades; contribution sum matches score', async () => {
+test('mock risk (risk-2) retains nulls, 25 factors and fractional grades; R = √(H × X) and group contributions sum to H and X', async () => {
   const client = make();
   await login(client);
   const risk = await client.request('RISK-01', { path: predictionPath });
-  assert.equal(risk.factors.length, 23);
+  assert.equal(risk.factors.length, 25);
+  assert.equal(risk.combine, 'sqrt_hx');
   assert.equal(risk.grade, null);
   assert.equal(risk.factors.find((f) => f.code === 'wind_speed').grade, 3.25);
   assert.equal(risk.factors.find((f) => f.code === 'slope_up').grade, null);
+  assert.equal(risk.factors.find((f) => f.code === 'fire_area').axis, 'scale');
+  const hazardAxes = ['weather', 'terrain', 'fuel', 'scale'];
+  const part = (inH) =>
+    risk.factors
+      .filter((f) => hazardAxes.includes(f.axis) === inH)
+      .reduce((n, f) => n + (f.contribution ?? 0), 0);
+  assert.ok(Math.abs(part(true) - risk.hazard) < 1e-12);
+  assert.ok(Math.abs(part(false) - risk.exposure) < 1e-12);
+  assert.ok(Math.abs(risk.score - Math.sqrt(risk.hazard * risk.exposure)) < 1e-12);
   assert.ok(
-    Math.abs(
-      risk.score - risk.factors.reduce((n, f) => n + (f.contribution ?? 0), 0),
-    ) < 1e-12,
-  );
-  assert.ok(
-    Math.abs(risk.factors.reduce((n, f) => n + f.weight, 0) - 0.94) < 1e-12,
+    Math.abs(risk.factors.reduce((n, f) => n + f.weight, 0) - 1.14) < 1e-12,
   );
   const now = await client.request('WTH-01', { path });
   assert.equal(now.precip, 0);

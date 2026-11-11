@@ -413,8 +413,12 @@ export function createFixtures(): ResponseMap {
     ['fuel_moisture', 'fuel', 0.06],
     ['vulnerable_population', 'infrastructure', 0.04],
     ['fire_station_distance', 'infrastructure', 0.03],
+    ['fire_area', 'scale', 0.15],
+    ['houses_nearby', 'exposure', 0.05],
   ];
   const grades: Record<string, number> = {
+    fire_area: 3.7,
+    houses_nearby: 3.4,
     wind_speed: 3.25,
     humidity: 4,
     temperature: 2,
@@ -422,10 +426,19 @@ export function createFixtures(): ResponseMap {
     vulnerable_population: 4,
     fire_station_distance: 2,
   };
+  // risk-2: R = √(H × X). H = 기상 · 지형 · 연료 · 규모, X = 인프라 · 노출(묶음마다 가중평균)
+  const hazardAxes: C.RiskAxis[] = ['weather', 'terrain', 'fuel', 'scale'];
+  const groupOf = (axis: C.RiskAxis) => (hazardAxes.includes(axis) ? 'H' : 'X');
   const includedWeight = weights.reduce(
     (sum, [code, , w]) => sum + (grades[code] === undefined ? 0 : w),
     0,
   );
+  const groupWeight = (g: 'H' | 'X') =>
+    weights.reduce(
+      (sum, [code, axis, w]) =>
+        sum + (grades[code] === undefined || groupOf(axis) !== g ? 0 : w),
+      0,
+    );
   const factors: C.RiskFactor[] = weights.map(([code, axis, weight]) => {
     const grade = grades[code] ?? null;
     return {
@@ -436,7 +449,8 @@ export function createFixtures(): ResponseMap {
       grade,
       weight,
       included: grade !== null,
-      contribution: grade === null ? null : (weight * grade) / includedWeight,
+      contribution:
+        grade === null ? null : (weight * grade) / groupWeight(groupOf(axis)),
       reason: grade === null ? '목업에서 제공하지 않는 변수' : null,
       source: 'MOCK_FIXTURE',
       value_at: grade === null ? null : MOCK_TIME,
@@ -449,20 +463,31 @@ export function createFixtures(): ResponseMap {
       ? available.reduce((sum, f) => sum + f.weight * f.grade!, 0) / w
       : null;
   };
+  const groupScore = (g: 'H' | 'X') =>
+    factors
+      .filter((f) => groupOf(f.axis) === g)
+      .reduce((sum, f) => sum + (f.contribution ?? 0), 0);
+  const hazard = groupScore('H'),
+    exposure = groupScore('X');
   const risk: C.Risk = {
     prediction_id: '41',
     status: 'PARTIAL',
-    score: factors.reduce((sum, f) => sum + (f.contribution ?? 0), 0),
+    score: Math.sqrt(hazard * exposure),
+    hazard,
+    exposure,
+    combine: 'sqrt_hx',
     grade: null,
     axes: {
       terrain: axisScore('terrain'),
       fuel: axisScore('fuel'),
       weather: axisScore('weather'),
       infrastructure: axisScore('infrastructure'),
+      scale: axisScore('scale'),
+      exposure: axisScore('exposure'),
     },
     included_weight_sum: includedWeight,
     factors,
-    method_version: 'mock-fixture-1',
+    method_version: 'mock-fixture-2',
     unavailable_reasons: [
       'UI 검증용 합성 값이며 일부 변수는 의도적으로 미제공',
     ],

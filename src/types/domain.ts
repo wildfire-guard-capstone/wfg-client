@@ -124,6 +124,9 @@ export interface ProposalRun {
 }
 export interface RiskResult {
   score: number | null;
+  /** 서버 risk-2(R = √(H × X))일 때만: 위해 H · 노출 X. 없으면 예전 한 번에 가중평균 */
+  hazard?: number | null;
+  exposure?: number | null;
   vars: (Scenario['risk_model']['vars'][number] & {
     value: string | number | null;
     grade: number | null;
@@ -135,6 +138,8 @@ export interface RiskResult {
     weight: number | null;
     score: number | null;
     n: number;
+    /** risk-2: 이 요소가 속한 묶음(H = 위해, X = 노출) */
+    group?: 'H' | 'X';
   }[];
   missing: string[];
   predictionId: number | string;

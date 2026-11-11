@@ -93,6 +93,7 @@ test('null risk stays null with 4 axes and 23 rows; raw risk scores are not reco
   const S = createScenario(),
     empty = riskView(null, S);
   assert.equal(empty.score, null);
+  assert.equal(empty.hazard, undefined);
   assert.equal(empty.vars.length, 23);
   assert.equal(empty.factors.length, 4);
   assert.ok(empty.factors.every((f) => f.score === null && f.weight === null));
@@ -100,6 +101,43 @@ test('null risk stays null with 4 axes and 23 rows; raw risk scores are not reco
   const view = riskView(raw, S);
   assert.equal(view.score, raw.score);
   assert.equal(view.computedAt, null);
+  assert.equal(view.vars.length, 25);
+  // risk-2: 6 axes, hazard group first; weights add up to 1 inside each group
+  assert.deepEqual(
+    view.factors.map((f) => [f.key, f.group]),
+    [
+      ['weather', 'H'],
+      ['terrain', 'H'],
+      ['fuel', 'H'],
+      ['scale', 'H'],
+      ['infra', 'X'],
+      ['exposure', 'X'],
+    ],
+  );
+  assert.equal(view.hazard, raw.hazard);
+  assert.equal(view.exposure, raw.exposure);
+  for (const g of ['H', 'X']) {
+    const fs = view.factors.filter((f) => f.group === g);
+    assert.ok(Math.abs(fs.reduce((sum, f) => sum + f.weight, 0) - 1) < 1e-10);
+  }
+});
+test('risk-1 responses (no combine) keep the old single weighted average view', () => {
+  const S = createScenario(),
+    raw = createFixtures()['RISK-01'];
+  const old = {
+    ...raw,
+    combine: undefined,
+    hazard: undefined,
+    exposure: undefined,
+    factors: raw.factors.filter((f) => !['scale', 'exposure'].includes(f.axis)),
+  };
+  old.included_weight_sum = old.factors
+    .filter((f) => f.included)
+    .reduce((n, f) => n + f.weight, 0);
+  const view = riskView(old, S);
+  assert.equal(view.hazard, undefined);
+  assert.equal(view.factors.length, 4);
+  assert.ok(view.factors.every((f) => f.group === undefined));
   assert.ok(
     Math.abs(view.factors.reduce((sum, f) => sum + f.weight, 0) - 1) < 1e-10,
   );
