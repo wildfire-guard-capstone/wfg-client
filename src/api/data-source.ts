@@ -6,6 +6,7 @@ import { createApiServices } from './services.ts';
 import { waitForOperation, validateOperation } from './operations.ts';
 import { validatePrediction, validateSlices, validateRisk } from './screen/predictions.ts';
 import { validateProposal } from './screen/proposals.ts';
+import { validateQa } from './screen/assistant.ts';
 import type { IncidentDirectory } from './screen/incidents.ts';
 import { ApiError } from './errors.ts';
 
@@ -267,14 +268,14 @@ export function createApiDataSource(client: ApiClient) {
           signal,
         }),
       ),
-    messages: (incidentId: Id, signal?: AbortSignal) =>
-      allPages((cursor) =>
+    messages: async (incidentId: Id, signal?: AbortSignal) =>
+      (await allPages((cursor) =>
         api.assistant.history({
           path: { incident_id: incidentId },
           query: { cursor, limit: 100 },
           signal,
         }),
-      ),
+      )).map(message => validateQa(message, incidentId)),
     corrections: (incidentId: Id, signal?: AbortSignal) =>
       allPages((cursor) =>
         api.corrections.history({

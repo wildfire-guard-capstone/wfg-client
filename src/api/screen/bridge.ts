@@ -11,6 +11,7 @@ import { createIdempotencyKey } from '../client.ts';
 import { waitForOperation } from '../operations.ts';
 import { remote } from '../data-source.ts';
 import { incidentDetailsView, incidentListRow } from './incidents.ts';
+import { validateAssistant } from './assistant.ts';
 import {
   NULL_TEXT,
   UI_TO_API_ITEM,
@@ -78,6 +79,7 @@ export function createScreenBridge(
   const versions = new Map<string, C.ProposalVersion[]>();
   const predictionOperations = new Map<string, C.Operation>();
   let proposalTicket = 0;
+  let chatTicket = 0;
   const requests = new Set<AbortController>();
   const incidentSummaries = new Map<string, C.IncidentSummary>();
   let listStatus: 'not-requested' | 'loading' | 'ready' | 'error' =
@@ -123,6 +125,7 @@ export function createScreenBridge(
     generation++;
     selection++;
     proposalTicket++;
+    chatTicket++;
     for (const c of requests) c.abort();
     requests.clear();
     selectionRequest?.abort();
@@ -262,6 +265,7 @@ export function createScreenBridge(
     signal: AbortSignal,
     epoch: number,
   ) {
+    const messageTicket = chatTicket;
     const [props, logs, corrections, messages] = await Promise.all([
       state.role === 'commander'
         ? remote(() => source.proposalVersions(incidentId, signal))
@@ -312,7 +316,7 @@ export function createScreenBridge(
             inc: row.incident_id,
             user: row.user_id,
           });
-    if (messages?.status === 'ready') {
+    if (messages?.status === 'ready' && messageTicket === chatTicket) {
       const log = document.getElementById('chat-log')!;
       log.textContent = '';
       for (const message of messages.data.slice().reverse()) {
@@ -347,6 +351,13 @@ export function createScreenBridge(
       );
       if (!alive(epoch) || ticket !== selection || signal.aborted) return;
       install(data);
+      if (state.incId !== id) {
+        chatTicket++;
+        chatting = false;
+        state.chatCtx = null;
+        host.chatBusy(false);
+        document.getElementById('chat-log')!.textContent = '';
+      }
       state.incId = id;
       pendingIncident = null;
       currentWeather = data.now.status === 'ready' ? data.now.data : null;
@@ -789,11 +800,12 @@ export function createScreenBridge(
   }
   async function sendChat() {
     const q = input('chat-input');
-    if (chatting || !q) return;
+    if (chatting || !q || pendingIncident) return;
     if (!raw.has(state.incId) || state.role !== 'commander') {
       host.notice(`${NULL_TEXT} 질문할 산불이 없습니다.`);
       return;
     }
+    const ticket = ++chatTicket, selected = selection;
     chatting = true;
     host.chatBusy(true);
     host.message('user', q);
@@ -810,7 +822,7 @@ export function createScreenBridge(
           );
           return;
         }
-        const response = await source.api.assistant.send({
+        const response = validateAssistant(await source.api.assistant.send({
           path: { incident_id: id },
           body: {
             input_text: q,
@@ -818,14 +830,18 @@ export function createScreenBridge(
             item_code: item ?? null,
           },
           signal,
-        });
-        if (!alive(epoch) || id !== state.incId) return;
+        }), id);
+        if (!alive(epoch) || id !== state.incId || ticket !== chatTicket || selected !== selection || pendingIncident) return;
         if (response.type === 'ANSWER') host.answer(response.message);
         else if (response.type === 'UNSUPPORTED')
-          host.message('bot', `${NULL_TEXT} ${response.reason}`);
+          host.message('bot', response.reason);
         else host.preview(response, () => void confirm(response, id));
+      } catch (cause) {
+        if (alive(epoch)) errors.set(`${id}.messages.send`, cause);
+        if (alive(epoch) && id === state.incId && ticket === chatTicket && selected === selection)
+          host.message('bot', `질의응답 실패${cause instanceof Error && 'status' in cause ? ` (HTTP ${cause.status})` : ''}: ${error(cause)}`);
       } finally {
-        if (alive(epoch)) {
+        if (alive(epoch) && ticket === chatTicket) {
           chatting = false;
           host.chatBusy(false);
         }
