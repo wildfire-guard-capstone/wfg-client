@@ -1,6 +1,7 @@
 import type { ApiClient } from './client.ts';
 import type { Incident, Id, Operation, Page, UserRole, MapFeatures, AdminArea } from './contracts.ts';
-import type { RequestFor } from './endpoints.ts';
+import type { RequestFor, LogQuery } from './endpoints.ts';
+import { validateEvents } from './screen/events.ts';
 import { createIdempotencyKey } from './client.ts';
 import { createApiServices } from './services.ts';
 import { waitForOperation, validateOperation } from './operations.ts';
@@ -288,13 +289,13 @@ export function createApiDataSource(client: ApiClient) {
         if (row.incident_id !== incidentId) throw new ApiError({ endpoint: 'COR-02', kind: 'protocol', code: 'INVALID_RESPONSE', message: '[필요한 정보: 선택한 산불의 정정 이력]' });
         return row;
       }),
-    events: (incidentId?: Id, signal?: AbortSignal) =>
-      allPages((cursor) =>
+    events: async (incidentId?: Id, signal?: AbortSignal, filters: Pick<LogQuery, 'action' | 'user_id'> = {}) =>
+      validateEvents(await allPages((cursor) =>
         api.events.list({
-          query: { incident_id: incidentId, cursor, limit: 100 },
+          query: { ...filters, incident_id: incidentId, cursor, limit: 100 },
           signal,
         }),
-      ),
+      ), incidentId),
     users: (signal?: AbortSignal) =>
       allPages((cursor) =>
         api.users.list({

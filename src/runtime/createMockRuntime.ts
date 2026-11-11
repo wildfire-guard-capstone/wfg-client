@@ -3034,6 +3034,7 @@ export function createMockRuntime() {
     $('#hist-events').innerHTML = ev.length
       ? `<table class="grid"><thead><tr><th style="width:62px">시각</th><th style="width:62px">구분</th><th>내용</th><th style="width:58px">사용자</th></tr></thead><tbody>${ev.map((e) => `<tr class="sys"><td class="num">${esc(e.t)}</td><td style="text-align:center;white-space:nowrap">${esc(e.kind)}</td><td>${esc(e.text)}</td><td class="small" style="text-align:center">${esc(e.user || '—')}</td></tr>`).join('')}</tbody></table>`
       : `<div class="muted small" style="padding:6px">기록된 이벤트가 없습니다.</div>`;
+    dataBridge?.bindLogs();
   }
   // 낱말 단위 차이(LCS): 이전에만 있는 말은 취소선(빨강), 이후에만 있는 말은 형광(초록)
   function wordDiff(a, b) {

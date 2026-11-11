@@ -1294,18 +1294,11 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
           break;
         case 'LOG-01':
           data = paginate(
-            fixture['LOG-01'].items.filter(
-              (e) =>
-                (!query.has('incident_id') ||
-                  e.incident_id === query.get('incident_id')) &&
-                (!query.has('action') || e.action === query.get('action')) &&
-                (!query.has('user_id') || e.user_id === query.get('user_id')) &&
-                (!query.has('from_at') ||
-                  Date.parse(e.created_at) >=
-                    Date.parse(query.get('from_at')!)) &&
-                (!query.has('to_at') ||
-                  Date.parse(e.created_at) <= Date.parse(query.get('to_at')!)),
-            ),
+            fixture['LOG-01'].items.filter(e =>
+              (query.has('incident_id') ? e.incident_id === query.get('incident_id') : e.incident_id === null) &&
+              (!query.has('action') || e.action === query.get('action')) &&
+              (!query.has('user_id') || e.user_id === query.get('user_id')),
+            ).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || (BigInt(a.id) < BigInt(b.id) ? 1 : BigInt(a.id) > BigInt(b.id) ? -1 : 0)),
             query,
           );
           break;

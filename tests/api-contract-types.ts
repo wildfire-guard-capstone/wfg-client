@@ -41,6 +41,8 @@ function checkContracts(client: ApiClient, response: AssistantResponse) {
   client.request('USR-03', { path: { user_id: '3' }, body: { role: 'ADMIN', admin_area_id: null } });
   // @ts-expect-error Password reset is bodyless.
   client.request('USR-05', { path: { user_id: '3' }, body: {} });
+  // @ts-expect-error Deployed LOG-01 ignores period filters; do not claim support.
+  client.request('LOG-01', { query: { incident_id: '100', from_at: '2026-11-10T00:00:00Z' } });
   // @ts-expect-error Retired endpoint is absent.
   const retired: ApiId = 'EVD-01';
   // @ts-expect-error Proposal layout has exactly S1..S6/E1..E6 codes.

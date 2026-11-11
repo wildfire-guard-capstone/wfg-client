@@ -23,8 +23,9 @@ export interface BaseQuery extends C.PageQuery, IncidentContextQuery {
 export interface LogQuery extends C.PageQuery, IncidentContextQuery {
   action?: string;
   user_id?: C.Id;
-  from_at?: C.DateTime;
-  to_at?: C.DateTime;
+  /** Not supported by the deployed backend; do not claim a filtered result. */
+  from_at?: never;
+  to_at?: never;
 }
 export interface UserQuery extends C.PageQuery {
   role?: C.UserRole;

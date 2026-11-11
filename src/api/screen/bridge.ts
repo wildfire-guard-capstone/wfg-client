@@ -11,6 +11,7 @@ import { createIdempotencyKey } from '../client.ts';
 import { waitForOperation, validateOperation } from '../operations.ts';
 import { remote } from '../data-source.ts';
 import { incidentDetailsView, incidentListRow } from './incidents.ts';
+import { eventView } from './events.ts';
 import { resourceRequest } from './resources.ts';
 import { validateAssistant } from './assistant.ts';
 import {
@@ -82,6 +83,9 @@ export function createScreenBridge(
   const rawUsers = new Map<string, C.AdminUser>();
   const userChanges = new Set<string>();
   let userTicket = 0;
+  let eventTicket = 0;
+  let eventContext: string | undefined;
+  let eventStatus: 'not-requested' | 'loading' | 'ready' | 'error' | 'forbidden' = 'not-requested';
   const rawResources = new Map<string, C.Resource>();
   const resourceBases = new Map<string, C.ResourceBase>();
   const resourceChanges = new Set<string>();
@@ -135,6 +139,10 @@ export function createScreenBridge(
   function reset() {
     generation++;
     userTicket++;
+    eventTicket++;
+    eventContext = undefined;
+    eventStatus = 'not-requested';
+    state.events = [];
     rawUsers.clear();
     userChanges.clear();
     selection++;
@@ -438,11 +446,19 @@ export function createScreenBridge(
     epoch: number,
   ) {
     const messageTicket = chatTicket;
+    const logTicket = ++eventTicket;
+    const canReadLogs = currentUser?.role === 'COMMANDER' || currentUser?.role === 'ADMIN';
+    if (eventContext !== incidentId) {
+      eventContext = incidentId;
+      state.events = [];
+    }
+    eventStatus = canReadLogs ? 'loading' : 'forbidden';
+    host.refresh();
     const [props, logs, corrections, messages] = await Promise.all([
       state.role === 'commander'
         ? remote(() => source.proposalVersions(incidentId, signal))
         : Promise.resolve(null),
-      remote(() => source.events(incidentId, signal)),
+      canReadLogs ? remote(() => source.events(incidentId, signal)) : Promise.resolve(null),
       state.role === 'commander'
         ? remote(() => source.corrections(incidentId, signal))
         : Promise.resolve(null),
@@ -462,19 +478,17 @@ export function createScreenBridge(
       if (latest?.apiId && !st.runs.some((run) => run.apiId === latest.apiId))
         st.runs.push(latest);
     }
-    if (logs.status === 'ready')
-      state.events = logs.data
-        .map((log) => ({
-          t: new Date(log.created_at).toLocaleTimeString('ko-KR', {
-            hour12: false,
-            timeZone: 'Asia/Seoul',
-          }),
-          kind: log.action,
-          text: log.details ? JSON.stringify(log.details) : NULL_TEXT,
-          inc: log.incident_id,
-          user: log.user_id,
-        }))
-        .reverse();
+    if (logTicket === eventTicket) {
+      if (logs?.status === 'ready') {
+        state.events = logs.data.map(eventView).reverse();
+        eventStatus = 'ready';
+        errors.delete(`${incidentId}.logs`);
+      } else if (logs?.status === 'error') {
+        eventStatus = 'error';
+        errors.set(`${incidentId}.logs`, logs.error);
+        host.notice(`이벤트 로그 조회 실패: ${error(logs.error)}`);
+      }
+    }
     if (corrections?.status === 'ready')
       for (const row of corrections.data)
         if (!state.events.some((e) => e.text.includes(`COR-${row.id}`)))
@@ -1153,6 +1167,13 @@ export function createScreenBridge(
         !!raw.get(state.rep.editingId ?? '')?.ended_at;
     }
   }
+  function bindLogs() {
+    const placeholder = document.getElementById('hist-events')?.querySelector<HTMLElement>('.muted.small');
+    if (!placeholder) return;
+    if (eventStatus === 'loading') placeholder.textContent = '이벤트 로그를 불러오는 중입니다.';
+    else if (eventStatus === 'error') placeholder.textContent = '이벤트 로그 조회에 실패했습니다.';
+    else if (eventStatus === 'forbidden') placeholder.textContent = '이벤트 로그 조회 권한이 없습니다.';
+  }
   function bindAdmin() {
     if (state.role !== 'admin') return;
     const confirmUser = (title: string, body: string, label: string, action: () => void) =>
@@ -1244,6 +1265,8 @@ export function createScreenBridge(
     sendChat,
     saveReport,
     bindAdmin,
+    bindLogs,
+    eventLogStatus: () => eventStatus,
     changeResource,
     changeBase,
     changeUser,
