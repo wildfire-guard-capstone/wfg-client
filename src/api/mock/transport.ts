@@ -149,6 +149,9 @@ function paginate<T>(
 /** Isolated fetch-compatible mock. It never patches global fetch and never contacts a server. */
 export function createMockFetch(options: MockOptions = {}): Fetcher {
   const fixture = { ...createFixtures(), ...options.fixtures };
+  const resources = structuredClone(fixture['RES-01'].items);
+  const bases = structuredClone(fixture['BASE-01'].items);
+  let resourcesChanged = false;
   const latency = options.latencyMs ?? 100;
   if (!Number.isFinite(latency) || latency < 0)
     throw new Error('목업 latencyMs는 0 이상이어야 합니다.');
@@ -462,6 +465,8 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
         body = parsed;
       }
       const allowedKeys: Partial<Record<ApiId, string[]>> = {
+        'RES-03': ['kind','name','base_id','status','attrs','deployed_incident_id'],
+        'RES-04': ['kind','name','base_id','status','attrs','deployed_incident_id'],
         'AUTH-01': ['login_id', 'password', 'role'],
         'INC-02': [
           'ignition_point',
@@ -914,7 +919,7 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
           break;
         case 'RES-01':
           data = paginate(
-            fixture['RES-01'].items.filter(
+            resources.filter(
               (r) =>
                 (!query.has('kind') || r.kind === query.get('kind')) &&
                 (!query.has('status') || r.status === query.get('status')) &&
@@ -923,7 +928,47 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
             query,
           );
           break;
-        case 'RES-02':
+        case 'RES-03':
+        case 'RES-04': {
+          const current = route.id === 'RES-04' ? resources.find(r => r.id === params.resource_id) : undefined;
+          if (route.id === 'RES-04' && !current) fail(404, 'NOT_FOUND', '자원을 찾지 못했습니다.');
+          if (!Object.keys(body).length) invalid('body', '변경할 필드가 필요합니다.');
+          const merged = { ...current, ...body };
+          const name = requiredString(merged, 'name');
+          if (name.length > 50) invalid('name', '50자 이내로 입력해주세요.');
+          if (!['HELICOPTER','VEHICLE'].includes(String(merged.kind))) invalid('kind', '자원 종류를 확인해주세요.');
+          const base_id = requiredString(merged, 'base_id');
+          if (!bases.some(b => b.id === base_id)) fail(404, 'BASE_NOT_FOUND', '기지를 찾지 못했습니다.');
+          if (resources.some(r => r.id !== current?.id && r.name === name)) fail(409, 'RESOURCE_NAME_EXISTS', '중복 자원명입니다.');
+          const status = merged.status ?? 'AVAILABLE';
+          if (!['AVAILABLE','DEPLOYED','MAINTENANCE'].includes(String(status))) invalid('status', '자원 상태를 확인해주세요.');
+          if (merged.attrs !== undefined && (!isRecord(merged.attrs) || (merged.attrs.capacity_l !== undefined && (typeof merged.attrs.capacity_l !== 'number' || merged.attrs.capacity_l < 0)))) invalid('attrs', '자원 속성을 확인해주세요.');
+          const deployed = status === 'DEPLOYED' ? requiredString(merged, 'deployed_incident_id') : null;
+          if (deployed) openIncident(deployed);
+          const row: C.Resource = { id: current?.id ?? next(), kind: merged.kind as C.ResourceKind, name, base_id, status: status as C.ResourceStatus, attrs: (merged.attrs ?? {}) as C.JsonObject, deployed_incident_id: deployed };
+          if (current) resources[resources.indexOf(current)] = row;
+          else resources.push(row);
+          resourcesChanged = true;
+          data = row;
+          break;
+        }
+        case 'RES-05': {
+          const index = resources.findIndex(r => r.id === params.resource_id);
+          if (index < 0) fail(404, 'NOT_FOUND', '자원을 찾지 못했습니다.');
+          resources.splice(index, 1);
+          resourcesChanged = true;
+          data = undefined;
+          break;
+        }
+        case 'RES-02': {
+          const counts = new Map<string, C.ResourceCount>();
+          for (const r of resources) {
+            const key = `${r.base_id}:${r.kind}`;
+            const row = counts.get(key) ?? { base_id: r.base_id, kind: r.kind, available: 0, deployed: 0, maintenance: 0, total: 0 };
+            row[{ AVAILABLE: 'available', DEPLOYED: 'deployed', MAINTENANCE: 'maintenance' }[r.status] as 'available']++;
+            row.total++;
+            counts.set(key, row);
+          }
           data = {
             ...fixture['RES-02'],
             incident_deployed: query.has('incident_id')
@@ -931,15 +976,16 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
                 null)
               : null,
             incident_linked: query.has('incident_id')
-              ? fixture['RES-02'].incident_linked
+              ? Object.fromEntries(['HELICOPTER','VEHICLE'].map(kind => [kind, resources.filter(r => r.kind === kind && r.deployed_incident_id === query.get('incident_id')).length]))
               : null,
-            bases: fixture['RES-02'].bases.filter(
+            bases: (resourcesChanged ? [...counts.values()] : fixture['RES-02'].bases).filter(
               (r) =>
                 (!query.has('kind') || r.kind === query.get('kind')) &&
                 (!query.has('base_id') || r.base_id === query.get('base_id')),
             ),
           };
           break;
+        }
         case 'BASE-01':
           data = paginate(
             fixture['BASE-01'].items

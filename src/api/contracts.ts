@@ -355,6 +355,15 @@ export interface Resource {
   attrs: JsonObject;
   deployed_incident_id: Id | null;
 }
+export interface ResourceCreateRequest {
+  kind: ResourceKind;
+  name: string;
+  base_id: Id;
+  status?: ResourceStatus;
+  attrs?: JsonObject;
+  deployed_incident_id?: Id | null;
+}
+export type ResourceUpdateRequest = Partial<ResourceCreateRequest>;
 export interface ResourceCount {
   base_id: Id;
   kind: ResourceKind;

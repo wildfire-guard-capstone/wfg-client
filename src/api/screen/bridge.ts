@@ -11,6 +11,7 @@ import { createIdempotencyKey } from '../client.ts';
 import { waitForOperation, validateOperation } from '../operations.ts';
 import { remote } from '../data-source.ts';
 import { incidentDetailsView, incidentListRow } from './incidents.ts';
+import { resourceRequest } from './resources.ts';
 import { validateAssistant } from './assistant.ts';
 import {
   NULL_TEXT,
@@ -78,6 +79,11 @@ export function createScreenBridge(
   const snapshot = new Map<string, IncidentData>();
   const versions = new Map<string, C.ProposalVersion[]>();
   const predictionOperations = new Map<string, C.Operation>();
+  const rawResources = new Map<string, C.Resource>();
+  const resourceBases = new Map<string, C.ResourceBase>();
+  const resourceChanges = new Set<string>();
+  let resourceTicket = 0;
+  let resourceContext: string | undefined;
   let proposalTicket = 0;
   let chatTicket = 0;
   const requests = new Set<AbortController>();
@@ -128,6 +134,13 @@ export function createScreenBridge(
     selection++;
     proposalTicket++;
     chatTicket++;
+    resourceTicket++;
+    resourceContext = undefined;
+    rawResources.clear();
+    resourceBases.clear();
+    resourceChanges.clear();
+    S.resources = [];
+    S.resources_fetch_status = 'loading';
     for (const c of requests) c.abort();
     requests.clear();
     selectionRequest?.abort();
@@ -176,28 +189,68 @@ export function createScreenBridge(
     signal: AbortSignal,
     epoch: number,
   ) {
+    if (currentUser?.role === 'REPORTER') return;
+    const ticket = ++resourceTicket;
+    const context = incidentId ?? 'ADMIN';
+    if (resourceContext !== context) {
+      resourceContext = context;
+      S.resources = [];
+      rawResources.clear();
+      resourceBases.clear();
+      counts = resourceCounts(null);
+    }
+    S.resources_fetch_status = 'loading';
     const result = await source.resources(incidentId, signal);
-    if (
-      !alive(epoch) ||
-      signal.aborted ||
-      (incidentId !== undefined && state.incId !== incidentId)
-    )
-      return;
-    counts = resourceCounts(
-      result.summary.status === 'ready' ? result.summary.data : null,
-    );
-    S.resources =
-      result.list.status === 'ready'
-        ? resourceViews(
-            result.list.data,
-            result.bases.status === 'ready' ? result.bases.data : [],
-          )
-        : [];
-    S.resources_fetch_status = 'ready';
-    for (const [name, response] of Object.entries(result))
-      if (response.status === 'error')
-        errors.set(`resources.${name}`, response.error);
+    if (!alive(epoch) || signal.aborted || ticket !== resourceTicket ||
+        (incidentId !== undefined && state.incId !== incidentId)) return;
+    if (result.bases.status === 'ready') {
+      resourceBases.clear();
+      for (const row of result.bases.data) resourceBases.set(row.id, row);
+    }
+    if (result.summary.status === 'ready') counts = resourceCounts(result.summary.data);
+    if (result.list.status === 'ready') {
+      rawResources.clear();
+      for (const row of result.list.data) rawResources.set(row.id, row);
+      S.resources = resourceViews(result.list.data, [...resourceBases.values()]);
+    }
+    S.resources_fetch_status = result.list.status === 'error' && !rawResources.size ? 'failed' : 'ready';
+    for (const [name, response] of Object.entries(result)) {
+      if (response.status === 'error') errors.set(`resources.${name}`, response.error);
+      else errors.delete(`resources.${name}`);
+    }
+    const failed = Object.values(result).find(r => r.status === 'error');
+    if (failed?.status === 'error') host.notice(error(failed.error));
   }
+  async function changeResource(action: 'create' | 'update' | 'remove', id?: string, form?: import('./resources.ts').ResourceForm) {
+    if (currentUser?.role !== 'ADMIN' || state.role !== 'admin') {
+      host.notice('관리자만 자원을 변경할 수 있습니다.');
+      return;
+    }
+    const key = id ?? 'create';
+    const epoch = generation;
+    if (resourceChanges.has(key)) return;
+    resourceChanges.add(key);
+    try {
+      await task(async (signal, epoch) => {
+        const current = id ? rawResources.get(id) : undefined;
+        if (action !== 'create' && !current) throw new Error('조회된 자원을 다시 확인해주세요.');
+        if (action === 'remove') {
+          if (current!.status === 'DEPLOYED') throw new Error('투입 중인 자원은 삭제할 수 없습니다.');
+          await source.api.resources.remove({ path: { resource_id: id! }, signal });
+        } else {
+          const body = resourceRequest(form!, [...resourceBases.values()], current);
+          if (action === 'create') await source.api.resources.create({ body: body as C.ResourceCreateRequest, signal });
+          else await source.api.resources.update({ path: { resource_id: id! }, body, signal });
+        }
+        if (!alive(epoch)) return;
+        await resources(undefined, signal, epoch);
+        if (alive(epoch)) host.admin();
+      });
+    } finally {
+      if (alive(epoch)) resourceChanges.delete(key);
+    }
+  }
+
   function install(data: IncidentData) {
     raw.set(data.incident.id, data.incident);
     snapshot.set(data.incident.id, data);
@@ -999,15 +1052,37 @@ export function createScreenBridge(
       '[data-reissue]',
       '[data-unlock]',
       '[data-del]',
-      '[data-rsave]',
-      '[data-rdel]',
-      '#rs-add',
     ])
       for (const el of document.querySelectorAll<HTMLElement>(selector)) {
         if (el.tagName === 'SELECT')
           el.onchange = () => pending('계정 정보·권한 변경');
         else el.onclick = () => pending('계정·자원 관리');
       }
+    const readForm = (id?: string) => {
+      const value = (field: string) => id
+        ? (document.querySelector<HTMLInputElement>(`[data-r${field}="${id}"]`)?.value ?? '').trim()
+        : input(`rs-${field}`);
+      return { type: value('type'), name: value('name'), base: value('base'), qty: Number(value('qty')), status: value('status') };
+    };
+    for (const el of document.querySelectorAll<HTMLInputElement>('[data-rorg],#rs-org')) {
+      el.readOnly = true;
+      el.value = '[필요한 정보: 자원별 소속 필드]';
+      el.title = '서버 자원 계약에는 별도 소속 필드가 없습니다.';
+    }
+    const resourceAdd = document.getElementById('rs-add') as HTMLButtonElement | null;
+    if (resourceAdd) resourceAdd.onclick = () => {
+      const form = readForm();
+      resourceAdd.disabled = true;
+      void changeResource('create', undefined, form).finally(() => { resourceAdd.disabled = false; });
+    };
+    for (const el of document.querySelectorAll<HTMLButtonElement>('[data-rsave],[data-rdel]')) {
+      el.onclick = () => {
+        const id = el.dataset.rsave ?? el.dataset.rdel!;
+        const form = el.dataset.rsave ? readForm(id) : undefined;
+        el.disabled = true;
+        void changeResource(el.dataset.rsave ? 'update' : 'remove', id, form).finally(() => { el.disabled = false; });
+      };
+    }
     const add = document.getElementById('ac-add');
     if (add)
       add.onclick = () => {
@@ -1070,6 +1145,7 @@ export function createScreenBridge(
     sendChat,
     saveReport,
     bindAdmin,
+    changeResource,
     counts: () => counts,
     incidentRows: () =>
       [...incidentSummaries.values()].map((row) =>

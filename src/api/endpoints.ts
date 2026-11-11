@@ -41,7 +41,7 @@ interface Contract<Request, Response> {
   response: Response;
 }
 
-/** Only the 34 agreed, active endpoints. The other 12 and retired EVD-01 are intentionally absent. */
+/** Confirmed API contracts; retired endpoints remain absent. */
 export interface ApiContracts {
   'AUTH-01': Contract<{ body: C.LoginRequest }, C.AuthToken>;
   'AUTH-02': Contract<Read, C.User>;
@@ -104,6 +104,9 @@ export interface ApiContracts {
     C.ResourceSummary
   >;
   'BASE-01': Contract<Read<never, BaseQuery>, C.Page<C.ResourceBase>>;
+  'RES-03': Contract<{ body: C.ResourceCreateRequest }, C.Resource>;
+  'RES-04': Contract<Write<{ resource_id: C.Id }, C.ResourceUpdateRequest>, C.Resource>;
+  'RES-05': Contract<Read<{ resource_id: C.Id }>, undefined>;
   'PROP-01': Contract<
     Read<IncidentPath, C.PageQuery>,
     C.Page<C.ProposalVersion>
@@ -142,7 +145,7 @@ export type CallArgs<K extends ApiId> =
     ? [options?: CallOptions<K>]
     : [options: CallOptions<K>];
 export interface Endpoint {
-  method: 'GET' | 'POST';
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   path: string;
   status: 200 | 201 | 202 | 204;
   roles: readonly C.UserRole[];
@@ -327,6 +330,9 @@ export const endpoints = {
     roles: resourceReaders,
     priority: 'P2',
   },
+  'RES-03': { method: 'POST', path: '/admin/resources', status: 201, roles: ['ADMIN'], priority: 'P3', body: true },
+  'RES-04': { method: 'PATCH', path: '/admin/resources/{resource_id}', status: 200, roles: ['ADMIN'], priority: 'P3', body: true },
+  'RES-05': { method: 'DELETE', path: '/admin/resources/{resource_id}', status: 204, roles: ['ADMIN'], priority: 'P3' },
   'BASE-01': {
     method: 'GET',
     path: '/resource-bases',

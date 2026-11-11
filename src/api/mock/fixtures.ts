@@ -533,6 +533,9 @@ export function createFixtures(): ResponseMap {
     'MAP-03': { entity_type: 'village', entity: { ...map.features[0]!.properties, geometry: map.features[0]!.geometry } as C.Village },
     'MAP-04': page([{ id: '11', level: 'EMD', code: '0000000000', name: '목업 행정구역', parent_id: '10', neighbor_ids: [] }]),
     'RES-01': page([resource]),
+    'RES-03': resource,
+    'RES-04': resource,
+    'RES-05': undefined,
     'RES-02': {
       bases: [
         {
