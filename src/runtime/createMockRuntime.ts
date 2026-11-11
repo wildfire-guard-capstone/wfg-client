@@ -1873,7 +1873,6 @@ export function createMockRuntime() {
   function selectIncident(id, fly) {
     if (dataBridge && !suppressSelectionLoad) {
       pause();
-      state.incId = id;
       void dataBridge.select(id, fly);
       return;
     }
@@ -1882,7 +1881,7 @@ export function createMockRuntime() {
     if (g && g.others.some((o) => o.id === id)) id = g.primary.id;
     state.incId = id;
     if (map) {
-      state.markers['f0'].setLngLat(inc().ignition);
+      state.markers['f0']?.setLngLat(inc().ignition);
       updateFireLayers();
       if (fly) map.flyTo({ center: inc().ignition, zoom: 12.3, duration: 800 });
     }
@@ -2257,7 +2256,10 @@ export function createMockRuntime() {
     const open = on == null ? !d.classList.contains('on') : on;
     d.classList.toggle('on', open);
     $('#wing-fire').classList.toggle('on', open);
-    if (open) renderIncList();
+    if (open) {
+      renderIncList();
+      void dataBridge?.retryIncidents();
+    }
   }
   function toggleLogPanel(on?: boolean) {
     showPanel('#log-panel', on);
@@ -2334,15 +2336,19 @@ export function createMockRuntime() {
   }
   // 산불 목록(UC-SIT-02): 기본은 접수·진행 중 목록, 「종료」로 바꾸면 종료 처리된 산불 목록
   function incidentListHTML(mode, selId) {
-    const list = S.incidents.filter(
+    const list = (dataBridge ? dataBridge.incidentRows() : S.incidents).filter(
       (i) =>
         (mode === '종료' ? i.status === '종료' : i.status !== '종료') &&
         !mergedAway(i.id),
     );
     const empty =
-      mode === '종료'
-        ? '종료 처리된 산불이 없습니다.'
-        : '진행 중인 산불이 없습니다.';
+      dataBridge?.incidentListStatus() === 'error'
+        ? '산불 목록을 불러오지 못했습니다.'
+        : dataBridge?.incidentListStatus() === 'loading'
+          ? '산불 목록을 불러오는 중입니다.'
+          : mode === '종료'
+            ? '종료 처리된 산불이 없습니다.'
+            : '진행 중인 산불이 없습니다.';
     return list.length
       ? `<table class="grid"><thead><tr><th>산불 · 발생 장소</th><th style="width:78px">발생 시각</th><th style="width:60px">상태</th></tr></thead><tbody>${list.map((i) => `<tr class="clickable ${i.id === selId ? 'sel' : ''}" data-inc="${i.id}"><td><b>${esc(i.name)}</b><br><span class="small muted">${esc(i.addr)}</span></td><td class="num small">${i.start_time ? esc(ymdhm(new Date(i.start_time)).slice(5)) : '<span class="muted">미확인</span>'}</td><td style="text-align:center">${stBadge(i.status)}</td></tr>`).join('')}</tbody></table>`
       : `<div class="muted small" style="padding:8px 4px;border:1px dashed #ccc;text-align:center">${empty}</div>`;
@@ -2451,7 +2457,7 @@ export function createMockRuntime() {
     if (I.status !== '진행 중') return;
     openModal(
       '발화 종료 처리',
-      `<p><b>${esc(I.name)}</b>의 진화가 끝났으면 <b>종료</b> 상태로 바꿉니다.</p><p style="color:var(--red);font-weight:700">종료하면 상황 보고·예측 실행·상황 정정이 막힙니다.</p><table class="grid"><tr><td class="k">종료 시각</td><td>${ymdhm(nowSim())}</td></tr><tr><td class="k">처리자</td><td>${esc(state.user)}(${ROLE_LABEL[state.role]})</td></tr><tr><td class="k">이후</td><td>진행 중 목록에서 빠져 「종료」 목록으로 옮겨지고, 제안서·이력은 조회만 가능합니다.</td></tr></table>`,
+      `<p><b>${esc(I.name)}</b>의 진화가 끝났으면 <b>종료</b> 상태로 바꿉니다.</p><p style="color:var(--red);font-weight:700">종료하면 상황 보고·예측 실행·상황 정정이 막힙니다.</p><table class="grid"><tr><td class="k">종료 시각</td><td>${ymdhm(dataBridge ? new Date() : nowSim())}</td></tr><tr><td class="k">처리자</td><td>${esc(state.user)}(${ROLE_LABEL[state.role]})</td></tr><tr><td class="k">이후</td><td>진행 중 목록에서 빠져 「종료」 목록으로 옮겨지고, 제안서·이력은 조회만 가능합니다.</td></tr></table>`,
       [
         { label: '취소' },
         {
@@ -3832,7 +3838,7 @@ export function createMockRuntime() {
     $('#rep-report').value =
       I && I.report_time
         ? isoLocal(new Date(I.report_time))
-        : isoLocal(nowSim());
+        : isoLocal(dataBridge ? new Date() : nowSim());
     $('#rep-text').value = I ? I.report_text : '';
     const cl = I?.caller;
     $('#rep-corg').value = cl?.org || '';
@@ -4747,7 +4753,8 @@ export function createMockRuntime() {
   }
   function syncApiValues() {
     if (!dataBridge) return;
-    const missing = dataBridge.empty();
+    const pending = dataBridge.pendingIncident();
+    const missing = !!pending || dataBridge.empty();
     if (state.markers.f0)
       state.markers.f0.getElement().style.display = missing ? 'none' : '';
     if (missing && state.incId === '__NULL__') {
@@ -4755,19 +4762,48 @@ export function createMockRuntime() {
       $('#ip-badge').textContent = NULL_TEXT;
       if ($('#btn-predict')) $('#btn-predict').disabled = true;
     }
+    if (pending) {
+      $$('#st-detail td:not(.k)').forEach((cell) => {
+        cell.textContent = '불러오는 중…';
+      });
+      $$('#st-actions button').forEach((button) => {
+        button.disabled = true;
+      });
+      $('#btn-predict').disabled = true;
+      // Clear only source DATA while changing identity; retain layers and styles.
+      for (const id of ['f0', 'fire-cum', 'fire-past', 'fire-next', 'risk']) {
+        const source = map?.getSource(id) as
+          maplibregl.GeoJSONSource | undefined;
+        source?.setData(fc([]));
+      }
+    }
     $$('#st-detail tr').forEach((row) => {
       const cells = row.querySelectorAll('td');
       if (cells[0]?.textContent === '발생 일시' && !inc().start_time) {
         const span = cells[1].querySelector('span');
-        if (span) span.textContent = NULL_TEXT;
+        if (span) {
+          span.textContent = '미확인';
+          span.title = '[필요한 정보: 산불 발생 시각]';
+        }
       }
+      if (
+        !pending &&
+        cells[0]?.textContent === '접수 기록' &&
+        !inc().intake.length
+      )
+        cells[1].textContent = '[필요한 정보: 기관별 접수 이력]';
+      if (cells[2]?.textContent === '공식 단계')
+        cells[3].title = '[필요한 정보: 공식 발령 단계·위기경보]';
       if (cells[0]?.textContent === '발생 장소' && missing) {
         const coordinates = cells[1].querySelector('span');
         if (coordinates) coordinates.textContent = `발화 위치 ${NULL_TEXT}`;
       }
     });
     $$('#inc-list .muted').forEach((element) => {
-      if (element.textContent === '미확인') element.textContent = NULL_TEXT;
+      if (element.textContent === '미확인') {
+        // Keep this narrow column's original compact empty state.
+        element.title = '[필요한 정보: 산불 발생 시각]';
+      }
     });
     if (state.role === 'reporter' && !state.rep.intake.length) {
       const empty = $('#rep-intake .muted');

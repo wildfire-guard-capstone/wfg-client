@@ -10,13 +10,13 @@ import type { Scenario, Account, Ring } from '../../types/scenario.ts';
 import { createIdempotencyKey } from '../client.ts';
 import { waitForOperation } from '../operations.ts';
 import { remote } from '../data-source.ts';
+import { incidentDetailsView, incidentListRow } from './incidents.ts';
 import {
   NULL_TEXT,
   UI_TO_API_ITEM,
   accountView,
   displayRing,
   emptyIncident,
-  incidentView,
   numberText,
   proposalView,
   resourceCounts,
@@ -76,6 +76,13 @@ export function createScreenBridge(
   const snapshot = new Map<string, IncidentData>();
   const versions = new Map<string, C.ProposalVersion[]>();
   const requests = new Set<AbortController>();
+  const incidentSummaries = new Map<string, C.IncidentSummary>();
+  let listStatus: 'not-requested' | 'loading' | 'ready' | 'error' =
+    'not-requested';
+  let listError: unknown;
+  let selectionRequest: AbortController | null = null;
+  let pendingIncident: string | null = null;
+  let ending = false;
   let generation = 0,
     selection = 0,
     disposed = false,
@@ -96,15 +103,14 @@ export function createScreenBridge(
     cause instanceof Error ? cause.message : String(cause);
   async function task<T>(
     fn: (signal: AbortSignal, epoch: number) => Promise<T>,
+    controller = new AbortController(),
   ): Promise<T | undefined> {
-    const controller = new AbortController(),
-      epoch = generation;
+    const epoch = generation;
     requests.add(controller);
     try {
       return await fn(controller.signal, epoch);
     } catch (cause) {
-      if (!controller.signal.aborted && alive(epoch))
-        host.notice(`${NULL_TEXT} ${error(cause)}`);
+      if (!controller.signal.aborted && alive(epoch)) host.notice(error(cause));
       return undefined;
     } finally {
       requests.delete(controller);
@@ -115,6 +121,12 @@ export function createScreenBridge(
     selection++;
     for (const c of requests) c.abort();
     requests.clear();
+    selectionRequest?.abort();
+    selectionRequest = null;
+    pendingIncident = null;
+    incidentSummaries.clear();
+    listStatus = 'not-requested';
+    listError = undefined;
     raw.clear();
     snapshot.clear();
     versions.clear();
@@ -154,6 +166,7 @@ export function createScreenBridge(
     const result = await source.resources(incidentId, signal);
     if (
       !alive(epoch) ||
+      signal.aborted ||
       (incidentId !== undefined && state.incId !== incidentId)
     )
       return;
@@ -176,7 +189,7 @@ export function createScreenBridge(
     raw.set(data.incident.id, data.incident);
     snapshot.set(data.incident.id, data);
     const old = S.incidents.findIndex((i) => i.id === data.incident.id);
-    const view = incidentView(
+    const view = incidentDetailsView(
       data.incident,
       data.perimeters.status === 'ready' ? data.perimeters.data : [],
     );
@@ -255,7 +268,7 @@ export function createScreenBridge(
         ? remote(() => source.messages(incidentId, signal))
         : Promise.resolve(null),
     ]);
-    if (!alive(epoch) || state.incId !== incidentId) return;
+    if (!alive(epoch) || signal.aborted || state.incId !== incidentId) return;
     if (props?.status === 'ready') {
       versions.set(incidentId, props.data);
       const st = IS(incidentId),
@@ -311,7 +324,12 @@ export function createScreenBridge(
         errors.set(`${incidentId}.${name}`, result.error);
   }
   async function select(id: string, fly = false) {
+    if (pendingIncident === id || disposed) return;
     const ticket = ++selection;
+    selectionRequest?.abort();
+    selectionRequest = new AbortController();
+    pendingIncident = id;
+    host.refresh();
     let applied = false;
     await task(async (signal, epoch) => {
       const data = await source.loadIncident(
@@ -319,21 +337,67 @@ export function createScreenBridge(
         roleToApi(state.role!),
         signal,
       );
-      if (!alive(epoch) || ticket !== selection || state.incId !== id) return;
+      if (!alive(epoch) || ticket !== selection || signal.aborted) return;
       install(data);
+      state.incId = id;
+      pendingIncident = null;
       currentWeather = data.now.status === 'ready' ? data.now.data : null;
       if (data.prediction.status === 'ready')
         host.baseAt(data.prediction.data.base_at);
+      // Commit the selected identity and detail together before related panels load.
+      host.selected(id, fly);
+      if (state.role === 'reporter') host.reportForm(id);
+      applied = true;
       await Promise.all([
         resources(id, signal, epoch),
         histories(id, signal, epoch),
       ]);
       if (!alive(epoch) || ticket !== selection || state.incId !== id) return;
-      applied = true;
-      host.selected(id, fly);
-      if (state.role === 'reporter') host.reportForm(id);
+      host.refresh();
+    }, selectionRequest);
+    if (!disposed && ticket === selection) {
+      pendingIncident = null;
+      selectionRequest = null;
+      if (!applied && state.role === 'reporter')
+        host.reportForm(raw.has(state.incId) ? state.incId : null);
+      host.refresh();
+    }
+  }
+  async function retryIncidents() {
+    if (listStatus !== 'error' || disposed) return;
+    listStatus = 'loading';
+    host.refresh();
+    await task(async (signal, epoch) => {
+      try {
+        const directory = await source.incidentDirectory(signal);
+        if (!alive(epoch)) return;
+        incidentSummaries.clear();
+        for (const row of directory.items) incidentSummaries.set(row.id, row);
+        for (const [id, detail] of directory.details)
+          if (detail.status === 'ready') {
+            raw.set(id, detail.data);
+            const index = S.incidents.findIndex((row) => row.id === id);
+            if (index < 0)
+              S.incidents.push(incidentDetailsView(detail.data, []));
+            else if (id !== state.incId)
+              S.incidents[index] = incidentDetailsView(detail.data, []);
+          }
+        listStatus = 'ready';
+        listError = undefined;
+        if (!raw.has(state.incId)) {
+          const first = directory.items.find((row) => raw.has(row.id));
+          if (first) await select(first.id);
+        }
+        if (alive(epoch)) host.refresh();
+      } catch (cause) {
+        if (alive(epoch)) {
+          listStatus = 'error';
+          listError = cause;
+          host.refresh();
+        }
+        throw cause;
+      }
     });
-    if (!applied && !disposed && state.incId === id) host.refresh();
   }
   async function login() {
     if (loading || loggingOut || disposed) return;
@@ -382,62 +446,52 @@ export function createScreenBridge(
             bindAdmin();
             return;
           }
-          const list = await source.listIncidents(signal);
-          if (!alive(epoch)) return;
-          S.incidents = list.map((row) =>
-            incidentView(
-              {
-                id: row.id,
-                name: row.name,
-                address: NULL_TEXT,
-                status: row.status,
-                ignition_point: { type: 'Point', coordinates: origin },
-                started_at: null,
-                reported_at: row.reported_at,
-                report_text: null,
-                reporter_org: null,
-                reporter_name: null,
-                reporter_phone: null,
-                reported_by: NULL_TEXT,
-                admin_area_id: row.admin_area_id,
-                current_stage: row.current_stage,
-                situation: {},
-                created_at: row.reported_at,
-                ended_at: null,
-                ended_by: null,
-                current_perimeter_id: '',
-                current_perimeter_version: row.current_perimeter_version,
-                latest_prediction_id: null,
-                latest_proposal_id: null,
-                needs_reprediction: row.needs_reprediction,
-                proposal_stale: row.proposal_stale,
-                situation_revision: '',
-                running_operation_id: null,
-              },
-              [],
-            ),
+          listStatus = 'loading';
+          const directory = await remote(() =>
+            source.incidentDirectory(signal),
           );
+          if (!alive(epoch)) return;
+          const list = directory.status === 'ready' ? directory.data.items : [];
+          listStatus = directory.status === 'ready' ? 'ready' : 'error';
+          listError =
+            directory.status === 'error' ? directory.error : undefined;
+          incidentSummaries.clear();
+          for (const row of list) incidentSummaries.set(row.id, row);
+          S.incidents = [];
+          if (directory.status === 'ready')
+            for (const [id, detail] of directory.data.details) {
+              if (detail.status === 'ready') {
+                raw.set(id, detail.data);
+                S.incidents.push(incidentDetailsView(detail.data, []));
+              } else if (detail.status === 'error')
+                errors.set(`${id}.incident`, detail.error);
+            }
           state.inc = {};
           state.events = [];
           state.incId =
-            list.find((i) => i.status === 'IN_PROGRESS')?.id ??
-            list[0]?.id ??
+            list.find((i) => i.status === 'IN_PROGRESS' && raw.has(i.id))?.id ??
+            list.find((i) => raw.has(i.id))?.id ??
             '__NULL__';
-          if (list.length) {
+          if (raw.has(state.incId)) {
             const data = await source.loadIncident(
               state.incId,
               user.role,
               signal,
+              raw.get(state.incId),
             );
             if (!alive(epoch)) return;
             install(data);
             currentWeather = data.now.status === 'ready' ? data.now.data : null;
             if (data.prediction.status === 'ready')
               host.baseAt(data.prediction.data.base_at);
-          } else S.incidents = [emptyIncident(origin)];
+          }
+          if (!S.incidents.length) S.incidents = [emptyIncident(origin)];
           host.enter(accountView(user));
-          if (!list.length && user.role === 'REPORTER') host.reportForm(null);
-          if (list.length) {
+          if (!raw.has(state.incId) && user.role === 'REPORTER')
+            host.reportForm(null);
+          if (listError)
+            host.notice(`산불 목록을 불러오지 못했습니다. ${error(listError)}`);
+          if (raw.has(state.incId)) {
             await Promise.all([
               resources(state.incId, signal, epoch),
               histories(state.incId, signal, epoch),
@@ -529,18 +583,41 @@ export function createScreenBridge(
   }
   async function end() {
     const incident = raw.get(state.incId);
-    if (!incident) return;
-    await task(async (signal, epoch) => {
-      await source.api.incidents.end({
-        path: { incident_id: incident.id },
-        body: { expected_perimeter_id: incident.current_perimeter_id },
-        signal,
+    if (
+      !incident ||
+      ending ||
+      pendingIncident ||
+      state.role !== 'commander' ||
+      incident.status !== 'IN_PROGRESS'
+    )
+      return;
+    ending = true;
+    try {
+      await task(async (signal, epoch) => {
+        const ended = await source.api.incidents.end({
+          path: { incident_id: incident.id },
+          body: { expected_perimeter_id: incident.current_perimeter_id },
+          signal,
+        });
+        if (alive(epoch)) {
+          raw.set(ended.id, ended);
+          const previous = snapshot.get(ended.id);
+          const index = S.incidents.findIndex((row) => row.id === ended.id);
+          if (index >= 0)
+            S.incidents[index] = incidentDetailsView(
+              ended,
+              previous?.perimeters.status === 'ready'
+                ? previous.perimeters.data
+                : [],
+            );
+          if (state.incId === ended.id) await select(ended.id);
+          else host.refresh();
+          host.notice('산불을 종료 상태로 바꿨습니다.');
+        }
       });
-      if (alive(epoch)) {
-        await select(incident.id);
-        host.notice('산불을 종료 상태로 바꿨습니다.');
-      }
-    });
+    } finally {
+      ending = false;
+    }
   }
   async function viewVersion(version: string) {
     const run = IS().runs.find((r) => r.id === version);
@@ -737,7 +814,7 @@ export function createScreenBridge(
     });
   }
   async function saveReport() {
-    if (saving) return;
+    if (saving || pendingIncident) return;
     const rp = state.rep,
       existing = rp.editingId ? raw.get(rp.editingId) : undefined;
     if (rp.drawMode) {
@@ -764,16 +841,17 @@ export function createScreenBridge(
                   .toISOString()
                   .slice(0, 16)
               : '';
+          const displayed = incidentDetailsView(existing, []);
           const changed =
             rp.intake.length > 0 ||
             input('rep-start') !== localInputDate(existing.started_at) ||
             input('rep-report') !== localInputDate(existing.reported_at) ||
             input('rep-name') !== existing.name ||
             input('rep-addr') !== existing.address ||
-            input('rep-text') !== text(existing.report_text) ||
-            input('rep-corg') !== text(existing.reporter_org) ||
-            input('rep-cname') !== text(existing.reporter_name) ||
-            input('rep-cphone') !== text(existing.reporter_phone) ||
+            input('rep-text') !== displayed.report_text ||
+            input('rep-corg') !== displayed.caller.org ||
+            input('rep-cname') !== displayed.caller.name ||
+            input('rep-cphone') !== displayed.caller.phone ||
             Number(input('rep-lng')) !==
               existing.ignition_point.coordinates[0] ||
             Number(input('rep-lat')) !== existing.ignition_point.coordinates[1];
@@ -859,6 +937,7 @@ export function createScreenBridge(
             idempotencyKey: createIdempotencyKey(),
             signal,
           });
+          incidentSummaries.set(response.id, response);
           id = response.id;
         }
         if (!alive(epoch)) return;
@@ -957,6 +1036,7 @@ export function createScreenBridge(
     logout,
     expire,
     select,
+    retryIncidents,
     predict,
     end,
     viewVersion,
@@ -965,6 +1045,13 @@ export function createScreenBridge(
     saveReport,
     bindAdmin,
     counts: () => counts,
+    incidentRows: () =>
+      [...incidentSummaries.values()].map((row) =>
+        incidentListRow(row, raw.get(row.id)),
+      ),
+    incidentListStatus: () => listStatus,
+    incidentListError: () => (listError ? error(listError) : ''),
+    pendingIncident: () => pendingIncident,
     weather: () => currentWeather,
     errors,
     current: (id = state.incId) => raw.get(id),

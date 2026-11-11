@@ -3,6 +3,8 @@ import type { Incident, Id, Operation, Page, UserRole } from './contracts.ts';
 import { createIdempotencyKey } from './client.ts';
 import { createApiServices } from './services.ts';
 import { waitForOperation } from './operations.ts';
+import type { IncidentDirectory } from './screen/incidents.ts';
+import { ApiError } from './errors.ts';
 
 export type Remote<T> =
   | { status: 'ready'; data: T }
@@ -38,9 +40,87 @@ export async function allPages<T>(
 /** Data-only boundary. It has no React/DOM/MapLibre imports and never changes a screen. */
 export function createApiDataSource(client: ApiClient) {
   const api = createApiServices(client);
-  async function loadIncident(id: Id, role: UserRole, signal?: AbortSignal) {
+  async function incidentDetail(id: Id, signal?: AbortSignal) {
+    const value = await api.incidents.get({
+      path: { incident_id: id },
+      signal,
+    });
+    if (value.id !== id || !['IN_PROGRESS', 'ENDED'].includes(value.status))
+      throw new ApiError({
+        endpoint: 'INC-03',
+        kind: 'protocol',
+        code: 'INVALID_RESPONSE',
+        message: '[필요한 정보: 요청한 산불 ID와 유효한 산불 상태]',
+      });
+    const coordinates = value.ignition_point?.coordinates;
+    if (
+      value.ignition_point?.type !== 'Point' ||
+      !Array.isArray(coordinates) ||
+      coordinates.length < 2 ||
+      !coordinates.slice(0, 2).every(Number.isFinite) ||
+      Math.abs(coordinates[0]!) > 180 ||
+      Math.abs(coordinates[1]!) > 90
+    )
+      throw new ApiError({
+        endpoint: 'INC-03',
+        kind: 'protocol',
+        code: 'INVALID_RESPONSE',
+        message: '[필요한 정보: 산불별 발화점 경도·위도]',
+      });
+    return value;
+  }
+  async function listIncidents(signal?: AbortSignal) {
+    const rows = await allPages((cursor) =>
+      api.incidents.list({ query: { cursor, limit: 100 }, signal }),
+    );
+    if (
+      rows.some(
+        (row) =>
+          typeof row.id !== 'string' ||
+          !/^[1-9]\d*$/.test(row.id) ||
+          !['IN_PROGRESS', 'ENDED'].includes(row.status),
+      )
+    )
+      throw new ApiError({
+        endpoint: 'INC-01',
+        kind: 'protocol',
+        code: 'INVALID_RESPONSE',
+        message: '[필요한 정보: 산불 목록의 유효한 ID·상태 코드]',
+      });
+    return [...new Map(rows.map((row) => [row.id, row])).values()];
+  }
+  async function incidentDirectory(
+    signal?: AbortSignal,
+  ): Promise<IncidentDirectory> {
+    const items = await listIncidents(signal);
+    const details: IncidentDirectory['details'] = new Map();
+    let index = 0;
+    // Bound concurrent detail requests while preserving the server's list order.
+    await Promise.all(
+      Array.from({ length: Math.min(4, items.length) }, async () => {
+        for (;;) {
+          signal?.throwIfAborted();
+          const row = items[index++];
+          if (!row) return;
+          details.set(
+            row.id,
+            await remote(() => incidentDetail(row.id, signal)),
+          );
+        }
+      }),
+    );
+    signal?.throwIfAborted();
+    return { items, details };
+  }
+  async function loadIncident(
+    id: Id,
+    role: UserRole,
+    signal?: AbortSignal,
+    known?: Incident,
+  ) {
     const path = { incident_id: id };
-    const incident = await api.incidents.get({ path, signal });
+    const incident =
+      known?.id === id ? known : await incidentDetail(id, signal);
     const predictionPath = {
       ...path,
       prediction_id: incident.latest_prediction_id!,
@@ -138,10 +218,8 @@ export function createApiDataSource(client: ApiClient) {
     loadIncident,
     resources,
     predict,
-    listIncidents: (signal?: AbortSignal) =>
-      allPages((cursor) =>
-        api.incidents.list({ query: { cursor, limit: 100 }, signal }),
-      ),
+    listIncidents,
+    incidentDirectory,
     proposalVersions: (incidentId: Id, signal?: AbortSignal) =>
       allPages((cursor) =>
         api.proposals.list({
