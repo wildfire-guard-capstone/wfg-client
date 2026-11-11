@@ -87,6 +87,9 @@ export interface RulesResult {
   injuries?: string[];
 }
 export interface ProposalBlock {
+  /** API data mapping only; original card layout stays unchanged. */
+  apiMissing?: boolean;
+  apiItemCode?: string;
   id: string;
   axis: string;
   name: string;
@@ -101,10 +104,12 @@ export interface ProposalBlock {
 }
 export interface PredictionPerimeter {
   version: number;
-  area: number;
+  area: number | null;
   at: string;
 }
 export interface ProposalRun {
+  apiId?: string;
+  apiLoaded?: boolean;
   id: string;
   fv: number;
   seq: number;
@@ -118,22 +123,22 @@ export interface ProposalRun {
   changed?: string[];
 }
 export interface RiskResult {
-  score: number;
+  score: number | null;
   vars: (Scenario['risk_model']['vars'][number] & {
     value: string | number | null;
     grade: number | null;
-    wn: number;
+    wn: number | null;
   })[];
   factors: {
     key: string;
     name: string;
-    weight: number;
-    score: number;
+    weight: number | null;
+    score: number | null;
     n: number;
   }[];
   missing: string[];
-  predictionId: number;
-  computedAt: Date;
+  predictionId: number | string;
+  computedAt: Date | null;
   mergedIds: string[];
 }
 export interface IncidentState {

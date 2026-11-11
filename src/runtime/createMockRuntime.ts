@@ -5,13 +5,29 @@ import type {
   LineString,
   Point,
   Polygon,
+  Geometry,
+  MultiLineString,
 } from 'geojson';
+import { createApiClientFromEnv } from '../api/environment';
+import { createApiDataSource, type ApiDataSource } from '../api/data-source';
+import { mapRenderData, type MapWindow, type MapMarker } from '../api/screen/maps';
+import { createScreenBridge, type ScreenBridge } from '../api/screen/bridge';
+import { screenMockOptions } from '../api/screen/mock-seed';
+import {
+  NULL_TEXT,
+  displayRing,
+  shapeOf,
+  containsGeometry,
+  numberText,
+  proposalView,
+} from '../api/screen/adapters';
+import type { CorrectionPreview, QaMessage } from '../api/contracts';
 import { calculateRisk } from '../models/risk';
 import { createGeometry } from '../models/geometry';
 import * as maplibregl from 'maplibre-gl';
 import { createScenario } from '../data/scenario';
-import { BOUNDARIES } from '../data/boundaries';
-import { OSM_LINES } from '../data/osmLines';
+import { BOUNDARIES as STATIC_BOUNDARIES } from '../data/boundaries';
+import { OSM_LINES as STATIC_OSM_LINES } from '../data/osmLines';
 import { WATER_SOURCES } from '../data/waterSources';
 import { query, queryAll } from './dom';
 import { createLifecycle } from './lifecycle';
@@ -37,11 +53,36 @@ import type {
 export function createMockRuntime() {
   const lifecycle = createLifecycle();
   const S = createScenario();
+  const apiMode = import.meta.env.VITE_API_MODE;
+  let BOUNDARIES: FeatureCollection = apiMode ? { type: 'FeatureCollection', features: [] } : STATIC_BOUNDARIES;
+  let OSM_LINES: FeatureCollection = apiMode ? { type: 'FeatureCollection', features: [] } : STATIC_OSM_LINES;
+  if (apiMode) {
+    S.villages = []; S.facilities = []; S.shelters = []; S.agencies = []; S.routes = [];
+    S.power_line_fallback = { name: '[필요한 정보: 송전선 도형]', coords: [] };
+  }
+  let mapSource: ApiDataSource | null = null;
+  let mapRequest: AbortController | null = null;
+  let mapQueryKey = '';
+  let mapTimer: number | undefined;
+  let entityRequest: AbortController | null = null;
+  let currentMapData: MapWindow | null = null;
+  let mapBound = false;
+  let dataBridge: ScreenBridge | null = null;
+  let suppressSelectionLoad = false;
   const $ = query;
   const $$ = queryAll;
-  const clone = (o) => JSON.parse(JSON.stringify(o));
-  const fmt1 = (n) => (Math.round(n * 10) / 10).toString();
-  const fmt0 = (n) => Math.round(n).toLocaleString('ko-KR');
+  const clone = (o) =>
+    shapeOf(o)
+      ? displayRing(shapeOf(o).geometry, shapeOf(o).area)
+      : JSON.parse(JSON.stringify(o));
+  const fmt1 = (n) =>
+    dataBridge && (n == null || !Number.isFinite(n))
+      ? NULL_TEXT
+      : (Math.round(n * 10) / 10).toString();
+  const fmt0 = (n) =>
+    dataBridge && (n == null || !Number.isFinite(n))
+      ? NULL_TEXT
+      : Math.round(n).toLocaleString('ko-KR');
   const esc = (s) =>
     String(s ?? '').replace(
       /[&<>"]/g,
@@ -74,11 +115,17 @@ export function createMockRuntime() {
   // ------------------------------------------------------------------ 시각
   const T0 = new Date(S.meta.now);
   const pad2 = (n) => String(n).padStart(2, '0');
-  const hhmm = (d) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  const hhmm = (d) =>
+    dataBridge && !Number.isFinite(d?.getTime())
+      ? NULL_TEXT
+      : `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
   const hhmmss = (d) => `${hhmm(d)}:${pad2(d.getSeconds())}`;
   const ymd = (d) =>
     `${d.getFullYear()}.${pad2(d.getMonth() + 1)}.${pad2(d.getDate())}`;
-  const ymdhm = (d) => `${ymd(d)} ${hhmm(d)}`;
+  const ymdhm = (d) =>
+    dataBridge && !Number.isFinite(d?.getTime())
+      ? NULL_TEXT
+      : `${ymd(d)} ${hhmm(d)}`;
   const isoLocal = (d) =>
     `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
   const addH = (d, h) => new Date(d.getTime() + h * 3600e3);
@@ -157,9 +204,9 @@ export function createMockRuntime() {
     toM,
     fromM,
     distKm,
-    pointInRing,
+    pointInRing: originalPointInRing,
     pointInGeom,
-    ringAreaHa,
+    ringAreaHa: originalRingAreaHa,
     lineSamples,
     lineHitsRing,
     firstSlice,
@@ -169,6 +216,12 @@ export function createMockRuntime() {
     buildSlices,
     circleRing,
   } = createGeometry(S.incidents[0].ignition, S.fire_model);
+  const pointInRing = (point, ring) =>
+    shapeOf(ring)
+      ? containsGeometry(point, shapeOf(ring).geometry, originalPointInRing)
+      : originalPointInRing(point, ring);
+  const ringAreaHa = (ring) =>
+    shapeOf(ring) ? shapeOf(ring).area : originalRingAreaHa(ring);
   const distFromFire = (lng, lat) => distKm(inc().ignition, [lng, lat]);
   // 화선 버전(UC-REPORT-01): 처음 받은 보고가 v1 — 그 보고에 화선이 있으면 그 화선, 없으면 발화점 자체가 v1
   // 이후 실측 화선 보고는 v2, v3 …. 최신 '유효' 실측 화선이 현재 화선이며 예측의 시작점이다(없으면 발화점 = v1)
@@ -177,12 +230,14 @@ export function createMockRuntime() {
     return v.length ? v[v.length - 1] : null;
   };
   const actualRing = (i = inc()) => {
+    if (dataBridge) return dataBridge.ring(i.id);
     const p = curPerim(i);
     return p ? p.ring : null;
   };
   const IGNITION_VER = 1;
   const perimVer = (p) => (p ? p.version : IGNITION_VER);
-  const perimTag = (p) => (p ? `v${p.version}` : `v${IGNITION_VER}(발화점)`);
+  const perimTag = (p) =>
+    p ? `v${p.version}` : dataBridge ? NULL_TEXT : `v${IGNITION_VER}(발화점)`;
   function mulberry(seed) {
     return () => {
       seed |= 0;
@@ -902,7 +957,9 @@ export function createMockRuntime() {
   // 가져오지 못한 변수는 빼고 남은 가중치로 계산한다
   const wx = () => S.weather.series[0];
   const wxText = (w = wx()) =>
-    `${dirName(w.wind_dir)}풍 ${w.wind_ms} m/s · 습도 ${w.rh}% · 기온 ${w.temp_c}℃ · 시정 ${w.vis_m >= 1000 ? fmt1(w.vis_m / 1000) + ' km' : w.vis_m + ' m'}`;
+    dataBridge
+      ? apiWeatherText()
+      : `${dirName(w.wind_dir)}풍 ${w.wind_ms} m/s · 습도 ${w.rh}% · 기온 ${w.temp_c}℃ · 시정 ${w.vis_m >= 1000 ? fmt1(w.vis_m / 1000) + ' km' : w.vis_m + ' m'}`;
   // CSV 구간으로 변수 값을 1~5 등급으로 바꾼다
   const varValueText = (v) =>
     v.value == null
@@ -1029,7 +1086,7 @@ export function createMockRuntime() {
     pick: '#ff6a00',
   };
   const AG_ICON = { fire: 'fire', police: 'police', gov: 'gov', kepco: 'bolt' };
-  const WATER = (WATER_SOURCES || []).map((w, i) => ({
+  const WATER = (apiMode ? [] : WATER_SOURCES || []).map((w, i) => ({
     ...w,
     id: `w${i}`,
   }));
@@ -1038,23 +1095,26 @@ export function createMockRuntime() {
   const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] };
   const fc = (feats: Feature[]): FeatureCollection => ({
     type: 'FeatureCollection',
-    features: feats,
+    features: feats.filter((f) => f.geometry != null),
   });
   const poly = (
     ring: Ring,
     props: GeoJsonProperties = {},
-  ): Feature<Polygon> => ({
+  ): Feature<Geometry> => ({
     type: 'Feature',
     properties: props,
-    geometry: { type: 'Polygon', coordinates: [ring] },
+    geometry: shapeOf(ring)?.geometry || {
+      type: 'Polygon',
+      coordinates: [ring],
+    },
   });
   const line = (
     coords: number[][],
     props: GeoJsonProperties = {},
-  ): Feature<LineString> => ({
+  ): Feature<LineString | MultiLineString> => ({
     type: 'Feature',
     properties: props,
-    geometry: { type: 'LineString', coordinates: coords },
+    geometry: apiLineGeometry(coords),
   });
   const pt = (c: number[], props: GeoJsonProperties = {}): Feature<Point> => ({
     type: 'Feature',
@@ -1568,6 +1628,92 @@ export function createMockRuntime() {
       .setLngLat(lngLat)
       .setHTML(`<div class="map-popup">${html}</div>`)
       .addTo(map);
+  function clearApiMap() {
+    mapRequest?.abort(); entityRequest?.abort();
+    window.clearTimeout(mapTimer);
+    mapQueryKey = '';
+    currentMapData = null;
+    if (!apiMode) return;
+    S.villages = []; S.facilities = []; S.shelters = []; S.agencies = []; S.routes = [];
+    BOUNDARIES = OSM_LINES = { type: 'FeatureCollection', features: [] };
+    if (map?.getSource('admin')) applyApiMap({ layers: [], collections: new Map(), areas: { status: 'ready', data: [] } });
+  }
+  async function openApiEntity(marker: MapMarker) {
+    if (!mapSource) return;
+    entityRequest?.abort();
+    const controller = entityRequest = new AbortController();
+    try {
+      const result = await mapSource.api.map.entity({ path: { entity_type: marker.entity, entity_id: marker.id }, signal: controller.signal });
+      if (controller.signal.aborted) return;
+      if (result.entity_type !== marker.entity || result.entity.id !== marker.id) throw new Error('[필요한 정보: 선택한 지도 대상과 일치하는 상세 응답]');
+      popup(marker.position, `<b>${esc(result.entity.name || '[필요한 정보: 지도 대상명]')}</b> <span style="color:#666">${esc(marker.kind)}</span>`);
+    } catch (error) {
+      if (!controller.signal.aborted) failNotice(`지도 상세 조회 실패${error.status ? ` (HTTP ${error.status})` : ''}: ${error.message}`);
+    }
+  }
+  function applyApiMap(snapshot: MapWindow) {
+    const view = mapRenderData(snapshot);
+    currentMapData = snapshot;
+    S.villages = view.villages; S.facilities = view.facilities; S.shelters = view.shelters; S.agencies = view.agencies;
+    BOUNDARIES = view.boundaries; OSM_LINES = view.roads;
+    for (const [key, marker] of Object.entries(state.markers))
+      if (/^[vfsaw]:/.test(key)) { marker.remove(); delete state.markers[key]; }
+    for (const marker of view.markers)
+      mkMarker(marker.key, markerEl(marker.cls, marker.icon, marker.name, marker.kind), marker.position, () => void openApiEntity(marker));
+    for (const [id, data] of [['admin', view.boundaries], ['osm-lines', view.roads], ['power', view.power], ['houses', view.houses], ['routes', EMPTY]] as const)
+      (map.getSource(id) as maplibregl.GeoJSONSource | undefined)?.setData(data);
+    applyLayerVisibility();
+    updateFireLayers();
+    syncApiValues();
+  }
+  async function refreshApiMap() {
+    if (!mapSource || !map?.getSource('admin') || !state.role || state.role === 'admin' || dataBridge?.pendingIncident()) return;
+    const bounds = map.getBounds();
+    const bbox = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()].map((n) => Number(n.toFixed(6))).join(',');
+    const incidentId = state.incId, key = `${incidentId}:${bbox}`;
+    if (key === mapQueryKey) return;
+    mapQueryKey = key;
+    mapRequest?.abort(); entityRequest?.abort();
+    const controller = mapRequest = new AbortController();
+    try {
+      const snapshot = await mapSource.mapWindow(bbox, controller.signal);
+      if (controller.signal.aborted || state.incId !== incidentId || !state.role) return;
+      applyApiMap(snapshot);
+      for (const [id, result] of snapshot.collections)
+        if (result.status === 'error') dataBridge?.errors.set(`map.${id}`, result.error);
+      const failures = [...snapshot.collections].filter(([, result]) => result.status === 'error');
+      if (failures.length || snapshot.areas.status === 'error') {
+        const cause = failures[0]?.[1];
+        const error = cause?.status === 'error' ? cause.error as Error & { status?: number } : snapshot.areas.status === 'error' ? snapshot.areas.error as Error & { status?: number } : null;
+        failNotice(`지도 일부 조회 실패${error?.status ? ` (HTTP ${error.status})` : ''}: ${error?.message || '[필요한 정보: 지도 레이어 응답]'}`);
+        mapQueryKey = '';
+      }
+    } catch (error) {
+      if (!controller.signal.aborted && state.role) {
+        mapQueryKey = '';
+        failNotice(`지도 조회 실패${error.status ? ` (HTTP ${error.status})` : ''}: ${error.message}`);
+      }
+    }
+  }
+  function scheduleApiMap() {
+    if (!apiMode) return;
+    window.clearTimeout(mapTimer);
+    mapTimer = lifecycle.setTimeout(() => void refreshApiMap(), 180);
+  }
+  function bindApiMap() {
+    if (!mapBound) {
+      mapBound = true;
+      map.on('moveend', scheduleApiMap);
+      for (const id of ['roads', 'power', 'houses', 'admin-sig'])
+        map.on('click', id, (event) => {
+          if (state.rep.pickMode || state.rep.drawMode) return;
+          const p = event.features?.[0]?.properties;
+          if (p?.api_entity_id && p.api_entity_type)
+            void openApiEntity({ key: '', id: String(p.api_entity_id), entity: p.api_entity_type, name: p.name, kind: p.name || '[필요한 정보: 지도 대상명]', cls: '', icon: '', position: [event.lngLat.lng, event.lngLat.lat] });
+        });
+    }
+    scheduleApiMap();
+  }
   // 두 폴리곤의 겹친 부분(Sutherland–Hodgman, 자르는 쪽은 볼록에 가깝다고 본다)
   function clipRing(subject, clip) {
     const open = (r) =>
@@ -1825,12 +1971,17 @@ export function createMockRuntime() {
     });
   }
   function selectIncident(id, fly) {
+    if (dataBridge && !suppressSelectionLoad) {
+      pause();
+      void dataBridge.select(id, fly);
+      return;
+    }
     pause();
     const g = mergeGroup();
     if (g && g.others.some((o) => o.id === id)) id = g.primary.id;
     state.incId = id;
     if (map) {
-      state.markers['f0'].setLngLat(inc().ignition);
+      state.markers['f0']?.setLngLat(inc().ignition);
       updateFireLayers();
       if (fly) map.flyTo({ center: inc().ignition, zoom: 12.3, duration: 800 });
     }
@@ -1843,12 +1994,12 @@ export function createMockRuntime() {
     const st = IS();
     st.t = Math.max(0, Math.min(8, t));
     $('#time-slider').value = String(st.t);
-    const d = addH(T0, st.t);
+    const d = dataBridge ? new Date(dataBridge.predictionAt(st.t) || NaN) : addH(T0, st.t);
     $('#time-label').innerHTML =
       inc().status === '종료'
         ? `${hhmm(T0)}<small>종료 — 예측 미표시</small>`
         : st.predicted
-          ? `${hhmm(d)}<small>t0+${st.t}h${isNight(d) ? ' · 야간' : ''}</small>`
+          ? `${hhmm(d)}<small>t0+${st.t}h${!dataBridge && isNight(d) ? ' · 야간' : ''}</small>`
           : `${hhmm(T0)}<small>예측 전</small>`;
     updateFireLayers();
   }
@@ -1896,6 +2047,7 @@ export function createMockRuntime() {
   }
   // UC-PRED-01: 통합지휘권자가 누를 때만 실행(자동 실행 없음). 누른 시점의 최신 실측 화선(없으면 발화점)·기상·자원 상태 기준
   function runPrediction() {
+    if (dataBridge) return void dataBridge.predict();
     const I = inc(),
       st = IS();
     if (!canOperate()) return;
@@ -2204,7 +2356,10 @@ export function createMockRuntime() {
     const open = on == null ? !d.classList.contains('on') : on;
     d.classList.toggle('on', open);
     $('#wing-fire').classList.toggle('on', open);
-    if (open) renderIncList();
+    if (open) {
+      renderIncList();
+      void dataBridge?.retryIncidents();
+    }
   }
   function toggleLogPanel(on?: boolean) {
     showPanel('#log-panel', on);
@@ -2257,7 +2412,7 @@ export function createMockRuntime() {
   // ------------------------------------------------------------------ 렌더링: 헤더 · 산불현황(UC-SIT-02) · 종료(UC-SIT-01)
   const stBadge = (s) =>
     `<span class="badge b-${s === '진행 중' ? '진행' : s}">${esc(s)}</span>`;
-  const fmtIso = (s) => (s ? ymdhm(new Date(s)) : '—');
+  const fmtIso = (s) => (s ? ymdhm(new Date(s)) : dataBridge ? NULL_TEXT : '—');
   const fmtHM = (s) => (s ? hhmm(new Date(s)) : '—');
   function renderHeader() {
     const I = inc();
@@ -2271,25 +2426,29 @@ export function createMockRuntime() {
     const w = wx();
     const value =
       `${esc(wxText(w))}` +
-      (S.weather.warnings.length
+      (!dataBridge && S.weather.warnings.length
         ? ` · <b style="color:var(--red)">${esc(S.weather.warnings.join('·'))}</b>`
         : '') +
-      `<br><span class="small muted">${esc(S.weather.source)} ${esc(S.weather.base_time)} 발표 · 수신 ${fmtIso(S.weather.received_at)} · ${esc(w.t)} 기준</span>`;
+      `<br><span class="small muted">${esc(dataBridge ? dataBridge.weather()?.source || NULL_TEXT : S.weather.source)} ${esc(dataBridge ? NULL_TEXT : S.weather.base_time)} 발표 · 수신 ${fmtIso(dataBridge ? dataBridge.weather()?.observed_at : S.weather.received_at)} · ${esc(dataBridge ? NULL_TEXT : w.t)} 기준</span>`;
     return S.weather.fetch_status === 'failed'
       ? `${warnHTML('기상 정보를 가져오지 못했습니다')}<div class="stale">${value}</div>`
       : value;
   }
   // 산불 목록(UC-SIT-02): 기본은 접수·진행 중 목록, 「종료」로 바꾸면 종료 처리된 산불 목록
   function incidentListHTML(mode, selId) {
-    const list = S.incidents.filter(
+    const list = (dataBridge ? dataBridge.incidentRows() : S.incidents).filter(
       (i) =>
         (mode === '종료' ? i.status === '종료' : i.status !== '종료') &&
         !mergedAway(i.id),
     );
     const empty =
-      mode === '종료'
-        ? '종료 처리된 산불이 없습니다.'
-        : '진행 중인 산불이 없습니다.';
+      dataBridge?.incidentListStatus() === 'error'
+        ? '산불 목록을 불러오지 못했습니다.'
+        : dataBridge?.incidentListStatus() === 'loading'
+          ? '산불 목록을 불러오는 중입니다.'
+          : mode === '종료'
+            ? '종료 처리된 산불이 없습니다.'
+            : '진행 중인 산불이 없습니다.';
     return list.length
       ? `<table class="grid"><thead><tr><th>산불 · 발생 장소</th><th style="width:78px">발생 시각</th><th style="width:60px">상태</th></tr></thead><tbody>${list.map((i) => `<tr class="clickable ${i.id === selId ? 'sel' : ''}" data-inc="${i.id}"><td><b>${esc(i.name)}</b><br><span class="small muted">${esc(i.addr)}</span></td><td class="num small">${i.start_time ? esc(ymdhm(new Date(i.start_time)).slice(5)) : '<span class="muted">미확인</span>'}</td><td style="text-align:center">${stBadge(i.status)}</td></tr>`).join('')}</tbody></table>`
       : `<div class="muted small" style="padding:8px 4px;border:1px dashed #ccc;text-align:center">${empty}</div>`;
@@ -2304,13 +2463,17 @@ export function createMockRuntime() {
               `<span style="display:inline-block;margin:1px 8px 1px 0">${esc(r.org)} <b>${esc(r.at)}</b> <span class="small muted">${esc(r.channel || '')}</span></span>`,
           )
           .join('')
-      : '—';
+      : dataBridge
+        ? NULL_TEXT
+        : '—';
   const perimHTML = (I) => {
     const p = curPerim(I),
       n = (I.perimeters || []).length;
     return p
-      ? `<b>${perimTag(p)}</b> · ${fmt1(ringAreaHa(p.ring))} ha · 꼭짓점 ${p.ring.length - 1}개 <span class="small muted">(${fmtIso(p.at)} ${esc(p.by || '')} ${esc(p.source || '')}${n > 1 ? ` · 이전 버전 ${n - 1}개 보존` : ''})</span>`
-      : '<span class="muted">미보고</span>';
+      ? `<b>${perimTag(p)}</b> · ${fmt1(ringAreaHa(p.ring))} ha · 꼭짓점 ${apiVertexCount(p.ring)}개 <span class="small muted">(${fmtIso(p.at)} ${esc(p.by || '')} ${esc(p.source || '')}${n > 1 ? ` · 이전 버전 ${n - 1}개 보존` : ''})</span>`
+      : dataBridge
+        ? NULL_TEXT
+        : '<span class="muted">미보고</span>';
   };
   // 산불 날개의 산불 목록: 기본은 접수·진행 중, 「종료」로 바꾸면 종료 처리된 산불
   function renderIncList() {
@@ -2394,13 +2557,14 @@ export function createMockRuntime() {
     if (I.status !== '진행 중') return;
     openModal(
       '발화 종료 처리',
-      `<p><b>${esc(I.name)}</b>의 진화가 끝났으면 <b>종료</b> 상태로 바꿉니다.</p><p style="color:var(--red);font-weight:700">종료하면 상황 보고·예측 실행·상황 정정이 막힙니다.</p><table class="grid"><tr><td class="k">종료 시각</td><td>${ymdhm(nowSim())}</td></tr><tr><td class="k">처리자</td><td>${esc(state.user)}(${ROLE_LABEL[state.role]})</td></tr><tr><td class="k">이후</td><td>진행 중 목록에서 빠져 「종료」 목록으로 옮겨지고, 제안서·이력은 조회만 가능합니다.</td></tr></table>`,
+      `<p><b>${esc(I.name)}</b>의 진화가 끝났으면 <b>종료</b> 상태로 바꿉니다.</p><p style="color:var(--red);font-weight:700">종료하면 상황 보고·예측 실행·상황 정정이 막힙니다.</p><table class="grid"><tr><td class="k">종료 시각</td><td>${ymdhm(dataBridge ? new Date() : nowSim())}</td></tr><tr><td class="k">처리자</td><td>${esc(state.user)}(${ROLE_LABEL[state.role]})</td></tr><tr><td class="k">이후</td><td>진행 중 목록에서 빠져 「종료」 목록으로 옮겨지고, 제안서·이력은 조회만 가능합니다.</td></tr></table>`,
       [
         { label: '취소' },
         {
           label: '확인',
           cls: 'primary',
           onClick: () => {
+            if (dataBridge) return void dataBridge.end();
             I.status = '종료';
             I.ended_at = nowSim().toISOString();
             I.ended_by = state.user;
@@ -2456,7 +2620,9 @@ export function createMockRuntime() {
   // 위험도를 뜻하는 숫자는 구간 색 칩으로(digits 0 = 변수 등급 정수)
   const riskChip = (s, digits = 2) =>
     s == null
-      ? '—'
+      ? dataBridge
+        ? NULL_TEXT
+        : '—'
       : `<span class="rk-chip ${riskBand(s)}">${digits ? s.toFixed(digits) : s}</span>`;
   // UC-PRED-02 산불 위험도: 지도 오른쪽 위 네모에 숫자만(통합지휘권자·열람자). 산불을 고르지 않았거나 예측 전·종료된 산불이면 숨김
   function renderRisk() {
@@ -2476,12 +2642,12 @@ export function createMockRuntime() {
     }
     const rk = riskOf(I),
       failed = st.riskStatus === 'failed' || !rk;
-    box.classList.toggle('fail', failed);
+    box.classList.toggle('fail', failed || (!!dataBridge && rk?.score == null));
     box.classList.remove(...RISK_BANDS);
-    if (!failed) box.classList.add(riskBand(rk.score));
+    if (!failed && riskBand(rk.score)) box.classList.add(riskBand(rk.score));
     box.innerHTML = failed
       ? `${WARN_SVG}<span>—</span>`
-      : `<span>${rk.score.toFixed(2)}</span>`;
+      : `<span>${numberText(rk.score, 2)}</span>`;
     if ($('#risk-pop').classList.contains('on')) renderRiskPop();
   }
   // 위험도 팝업: 숫자·4요소 점수·가중치 → 「요소별 지표」 팝업(23개 변수 표)
@@ -2493,18 +2659,25 @@ export function createMockRuntime() {
       body.innerHTML = `<div style="padding:12px 4px">${warnHTML('산불 위험도 정보를 가져오지 못했습니다')}</div>`;
       return;
     }
-    const pos = Math.max(0, Math.min(100, ((rk.score - 1) / 4) * 100));
+    const pos =
+      rk.score == null
+        ? 0
+        : Math.max(0, Math.min(100, ((rk.score - 1) / 4) * 100));
     body.innerHTML = `
-      <div class="rk-top"><div class="rk-v ${riskBand(rk.score)}">${rk.score.toFixed(2)}</div><div class="rk-scale"><div class="rk-track"><i style="left:${pos}%"></i></div><div class="rk-ticks"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span></div></div></div>
+      <div class="rk-top"><div class="rk-v ${riskBand(rk.score)}">${numberText(rk.score, 2)}</div><div class="rk-scale"><div class="rk-track"><i style="left:${pos}%"></i></div><div class="rk-ticks"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span></div></div></div>
       <table class="grid rk-fac"><thead><tr><th>요소</th><th>점수</th><th style="width:62px">가중치</th></tr></thead><tbody>${rk.factors
         .map(
           (f) =>
-            `<tr class="clickable" data-axis="${f.key}" title="${esc(f.name)} 변수 보기"><td><b>${esc(f.name)}</b></td><td><span class="rk-bar"><i class="${riskBand(f.score)}" style="width:${f.score == null ? 0 : (f.score / 5) * 100}%"></i></span>${riskChip(f.score)}</td><td class="num" style="text-align:center">${f.weight.toFixed(3)}</td></tr>`,
+            `<tr class="clickable" data-axis="${f.key}" title="${esc(f.name)} 변수 보기"><td><b>${esc(f.name)}</b></td><td><span class="rk-bar"><i class="${riskBand(f.score)}" style="width:${f.score == null ? 0 : (f.score / 5) * 100}%"></i></span>${riskChip(f.score)}</td><td class="num" style="text-align:center">${numberText(f.weight, 3)}</td></tr>`,
         )
         .join('')}</tbody></table>
-      <table class="grid rk-meta"><tr><td class="k">기준</td><td>화선 ${perimTag(st.predPerim)} · P5</td></tr><tr><td class="k">계산 시각</td><td>${rk.computedAt ? ymdhm(rk.computedAt) : '—'}</td></tr></table>
-      ${rk.missing.length ? `<div style="margin-top:6px">${warnHTML(`가져오지 못한 지표 ${rk.missing.length}개는 빼고 계산했습니다`)}</div>` : ''}
+      <table class="grid rk-meta"><tr><td class="k">기준</td><td>화선 ${perimTag(st.predPerim)} · P5</td></tr><tr><td class="k">계산 시각</td><td>${rk.computedAt ? ymdhm(rk.computedAt) : dataBridge ? NULL_TEXT : '—'}</td></tr></table>
+      ${rk.missing.length ? `<div style="margin-top:6px">${warnHTML(dataBridge && rk.score == null ? '산불 위험도 [NULL] — 계산 결과 미제공' : `가져오지 못한 지표 ${rk.missing.length}개는 빼고 계산했습니다`)}</div>` : ''}
       <div class="btnrow" style="margin-top:8px"><button id="btn-risk-vars" class="primary" style="flex:1;justify-content:center">요소별 지표</button></div>`;
+    if (dataBridge) {
+      const indicator = body.querySelector<HTMLElement>('.rk-track i');
+      if (indicator) indicator.hidden = rk.score == null;
+    }
     $$('#risk-pop-body .rk-fac tr.clickable').forEach(
       (tr) => (tr.onclick = () => openRiskVars(tr.dataset.axis)),
     );
@@ -2526,11 +2699,11 @@ export function createMockRuntime() {
       .map((f) => {
         const vs = rk.vars.filter((v) => v.axis === f.key);
         return (
-          `<tr class="grp" id="rv-${f.key}"><td colspan="3"><b>${esc(f.name)}</b> (${vs.length})</td><td class="num">${f.weight.toFixed(3)}</td><td class="num">${riskChip(f.score)}</td></tr>` +
+          `<tr class="grp" id="rv-${f.key}"><td colspan="3"><b>${esc(f.name)}</b> (${vs.length})</td><td class="num">${numberText(f.weight, 3)}</td><td class="num">${riskChip(f.score)}</td></tr>` +
           vs
             .map(
               (v) =>
-                `<tr><td>${esc(v.name)}</td><td class="num">${v.value == null ? warnHTML('가져오지 못함') : esc(varValueText(v))}</td><td style="text-align:center">${esc(v.unit || '—')}</td><td class="num">${v.wn.toFixed(3)}</td><td class="num">${riskChip(v.grade, 0)}</td></tr>`,
+                `<tr><td>${esc(v.name)}</td><td class="num">${v.value == null ? (dataBridge ? NULL_TEXT : warnHTML('가져오지 못함')) : esc(varValueText(v))}</td><td style="text-align:center">${esc(v.unit || '—')}</td><td class="num">${numberText(v.wn, 3)}</td><td class="num">${riskChip(v.grade, 0)}</td></tr>`,
             )
             .join('')
         );
@@ -2543,6 +2716,16 @@ export function createMockRuntime() {
     );
     $('#modal').classList.add('wide');
     $('#modal').scrollTop = 0;
+    if (dataBridge) {
+      const weightCell = $('#modal .rv tfoot .num');
+      if (weightCell)
+        weightCell.textContent = rk.vars.some((v) => v.wn > 0)
+          ? numberText(
+              rk.vars.reduce((sum, v) => sum + (v.wn || 0), 0),
+              3,
+            )
+          : NULL_TEXT;
+    }
     if (axisKey) {
       const g = document.getElementById(`rv-${axisKey}`);
       if (g) g.scrollIntoView({ block: 'start' });
@@ -2571,7 +2754,7 @@ export function createMockRuntime() {
       <div class="res-filter">${RSTATUS.map((s) => `<label><input type="checkbox" data-rs="${s}" ${state.resFilter[s] ? 'checked' : ''}> ${s}</label>`).join('')}</div>
       ${
         cols.length
-          ? `<div class="cnt" style="grid-template-columns:56px repeat(${cols.length}, 1fr)"><div class="h">구분</div>${cols.map((c) => `<div class="h">${c}</div>`).join('')}${RTYPES.map((t) => `<div class="h">${t}${t === '인력' ? '(명)' : '(대)'}</div>${cols.map((c) => `<div><b>${by[t][c]}</b></div>`).join('')}`).join('')}</div>
+          ? `<div class="cnt" style="grid-template-columns:56px repeat(${cols.length}, 1fr)"><div class="h">구분</div>${cols.map((c) => `<div class="h">${c}</div>`).join('')}${RTYPES.map((t) => `<div class="h">${t}${t === '인력' ? '(명)' : '(대)'}</div>${cols.map((c) => `<div><b>${apiResourceCount(by, t, c)}</b></div>`).join('')}`).join('')}</div>
       <table class="grid"><thead><tr><th>구분</th><th>명칭·호출부호</th><th>소속</th><th>수량</th><th>상태</th></tr></thead><tbody>${rows.map((r) => `<tr><td class="nw">${esc(r.type)}</td><td>${esc(r.name)}</td><td class="small">${esc(r.org)}</td><td class="num nw" style="text-align:center">${r.type === '인력' ? r.qty + '명' : '1대'}</td><td class="nw ${stCls[r.status] || ''}" style="text-align:center">${esc(r.status)}</td></tr>`).join('')}</tbody></table>`
           : `<div class="muted small" style="padding:8px 4px;text-align:center">선택한 상태가 없습니다.</div>`
       }`;
@@ -2629,10 +2812,12 @@ export function createMockRuntime() {
     }
     const prevRun = st.runs[st.runs.indexOf(run) - 1] || null;
     const all = run.blocks.filter((b) => b.axis === state.axis);
-    const fired = all.filter((b) => b.status[0] !== '(없음)');
-    const active = fired.filter(
-      (b) => state.filter === 'all' || b.status.includes(state.filter),
-    );
+    const fired = all.filter((b) => b.status[0] !== '(없음)' && !b.apiMissing);
+    const active = (
+      dataBridge
+        ? all.filter((b) => b.apiMissing || b.status[0] !== '(없음)')
+        : fired
+    ).filter((b) => state.filter === 'all' || b.status.includes(state.filter));
     const card = (b) => {
       const changed = prevRun && run.changed.includes(b.id);
       const evid =
@@ -2641,7 +2826,7 @@ export function createMockRuntime() {
             const c = S.evidence[e.key];
             return `<span class="ev"><span class="cite" data-b="${b.id}" data-k="${e.k}">${e.k}</span> ${esc(c.doc)} ${esc(c.page)} ${esc(c.section)}</span>`;
           })
-          .join('') || '—';
+          .join('') || (dataBridge ? NULL_TEXT : '—');
       return `<div class="card axis-${b.axis}" data-id="${b.id}">
         <div class="head"><span class="arrow">▶</span><span class="nm">${esc(b.name)}</span>${changed ? `<span class="chg-tag" data-chg="${b.id}" title="직전 버전 대비 변경 내용 보기">변경</span>` : ''}<span class="st">${badges(b.status)}</span></div>
         <div class="sum">
@@ -2822,6 +3007,7 @@ export function createMockRuntime() {
     $$('#hist-runs [data-view]').forEach(
       (b) =>
         (b.onclick = () => {
+          if (dataBridge) return void dataBridge.viewVersion(b.dataset.view);
           st.viewRun = st.runs.find((r) => r.id === b.dataset.view);
           renderAll();
           showTab('proposal');
@@ -2833,6 +3019,7 @@ export function createMockRuntime() {
         (b.onclick = () => {
           const r = st.runs.find((x) => x.id === b.dataset.diff),
             prev = st.runs[st.runs.indexOf(r) - 1];
+          if (dataBridge) return void dataBridge.compare(r);
           if (!prev) {
             toast('비교할 이전 버전이 없습니다.');
             return;
@@ -2847,6 +3034,7 @@ export function createMockRuntime() {
     $('#hist-events').innerHTML = ev.length
       ? `<table class="grid"><thead><tr><th style="width:62px">시각</th><th style="width:62px">구분</th><th>내용</th><th style="width:58px">사용자</th></tr></thead><tbody>${ev.map((e) => `<tr class="sys"><td class="num">${esc(e.t)}</td><td style="text-align:center;white-space:nowrap">${esc(e.kind)}</td><td>${esc(e.text)}</td><td class="small" style="text-align:center">${esc(e.user || '—')}</td></tr>`).join('')}</tbody></table>`
       : `<div class="muted small" style="padding:6px">기록된 이벤트가 없습니다.</div>`;
+    dataBridge?.bindLogs();
   }
   // 낱말 단위 차이(LCS): 이전에만 있는 말은 취소선(빨강), 이후에만 있는 말은 형광(초록)
   function wordDiff(a, b) {
@@ -3057,6 +3245,7 @@ export function createMockRuntime() {
     }, 12);
   }
   function sendChat() {
+    if (dataBridge) return void dataBridge.sendChat();
     // Enter나 빠른 질문으로도 중복 전송되지 않도록 차단
     if (chatPending || chatTypingCount > 0) return;
 
@@ -3528,13 +3717,17 @@ export function createMockRuntime() {
       return `지상 진화인력 ${corrTarget(c)}${c.unit}은 가용 범위 초과로 기록할 수 없습니다(${crewMax.length}개 조 ${crewMax.reduce((a, r) => a + (Number(r.qty) || 0), 0)}명).`;
     return null;
   }
-  function proposeCorrection(cs, q) {
+  function proposeCorrection(
+    cs,
+    q,
+    prepared?: { rows: unknown[][]; notes: string[]; confirm: () => void },
+  ) {
     const I = inc();
     if (I.status === '종료') {
       botSay('종료된 산불에는 상황 정정을 적용할 수 없습니다.');
       return;
     }
-    if (!IS().predicted) {
+    if (!prepared && !IS().predicted) {
       botSay(
         '아직 예측·제안이 없어 정정할 대상이 없습니다. 먼저 확산 예측을 실행해 주십시오.',
       );
@@ -3542,33 +3735,36 @@ export function createMockRuntime() {
     }
     const ok = [],
       errs = [];
-    cs.list.forEach((c) => {
-      const e = correctionError(c);
-      if (e) errs.push(e);
-      else ok.push(c);
-    });
-    if (!ok.length) {
+    if (!prepared)
+      cs.list.forEach((c) => {
+        const e = correctionError(c);
+        if (e) errs.push(e);
+        else ok.push(c);
+      });
+    if (!ok.length && !prepared) {
       botSay(
         `${errs.join(' ')} 대상을 다시 입력해 주십시오. 아무것도 저장하지 않았습니다.`,
       );
       return;
     }
-    const rows = ok.flatMap(correctionRows);
-    const notes = [
-      ...errs.map((e) => `반영하지 않음 — ${e}`),
-      ...(cs.unparsed.length
-        ? [
-            `해석하지 못한 부분 — “${cs.unparsed.join('”, “')}” (반영하지 않음, 필요하면 다시 입력)`,
-          ]
-        : []),
-    ];
+    const rows = prepared ? prepared.rows : ok.flatMap(correctionRows);
+    const notes = prepared
+      ? prepared.notes
+      : [
+          ...errs.map((e) => `반영하지 않음 — ${e}`),
+          ...(cs.unparsed.length
+            ? [
+                `해석하지 못한 부분 — “${cs.unparsed.join('”, “')}” (반영하지 않음, 필요하면 다시 입력)`,
+              ]
+            : []),
+        ];
     addMsg(
       'sys',
-      `상황 정정으로 판정 — 변화 ${ok.length}건의 정정 확인 카드를 엽니다`,
+      `상황 정정으로 판정 — 변화 ${prepared ? rows.length : ok.length}건의 정정 확인 카드를 엽니다`,
     );
     openModal(
       '상황 정정 확인',
-      `<div class="small muted" style="margin-bottom:8px">입력: “${esc(q)}” · 해석한 변화 <b>${ok.length}건</b></div><table class="grid"><thead><tr><th>대상</th><th>항목</th><th>이전</th><th>변경</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(String(r[0]))}</td><td>${esc(r[1])}</td><td>${esc(String(r[2]))}</td><td><b>${esc(String(r[3]))}</b></td></tr>`).join('')}</tbody></table>${notes.length ? `<div class="corr-note">${notes.map((n) => `<div>⚠ ${esc(n)}</div>`).join('')}</div>` : ''}<div class="small muted" style="margin-top:8px">확인하면 바뀐 상황 값을 모두 저장하고 이벤트 로그에 기록한 뒤, 예측(P1~P8)은 그대로 둔 채 규칙 판정과 대응 제안만 다시 만들어 새 버전을 저장합니다. 확인 전에는 아무것도 저장하지 않습니다.</div>`,
+      `<div class="small muted" style="margin-bottom:8px">입력: “${esc(q)}” · 해석한 변화 <b>${prepared ? rows.length : ok.length}건</b></div><table class="grid"><thead><tr><th>대상</th><th>항목</th><th>이전</th><th>변경</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(String(r[0]))}</td><td>${esc(r[1])}</td><td>${esc(String(r[2]))}</td><td><b>${esc(String(r[3]))}</b></td></tr>`).join('')}</tbody></table>${notes.length ? `<div class="corr-note">${notes.map((n) => `<div>⚠ ${esc(n)}</div>`).join('')}</div>` : ''}<div class="small muted" style="margin-top:8px">확인하면 바뀐 상황 값을 모두 저장하고 이벤트 로그에 기록한 뒤, 예측(P1~P8)은 그대로 둔 채 규칙 판정과 대응 제안만 다시 만들어 새 버전을 저장합니다. 확인 전에는 아무것도 저장하지 않습니다.</div>`,
       [
         {
           label: '취소',
@@ -3580,6 +3776,7 @@ export function createMockRuntime() {
           label: '확인 · 저장 후 재생성',
           cls: 'primary',
           onClick: () => {
+            if (prepared) return prepared.confirm();
             applyCorrection(ok);
           },
         },
@@ -3697,7 +3894,7 @@ export function createMockRuntime() {
     $('#rep-poly-info').innerHTML = rp.drawMode
       ? `그리는 중 — 꼭짓점 ${rp.pts.length}개 (3개 이상이면 「그리기 완료」)`
       : rp.ring
-        ? `제출할 화선: 꼭짓점 <b>${rp.ring.length - 1}개</b> · 면적 <b>${fmt1(ringAreaHa(rp.ring))} ha</b> <span class="small muted">(${esc(rp.ringSource || '')})</span>`
+        ? `제출할 화선: 꼭짓점 <b>${apiVertexCount(rp.ring)}개</b> · 면적 <b>${fmt1(ringAreaHa(rp.ring))} ha</b> <span class="small muted">(${esc(rp.ringSource || '')})</span>`
         : '제출할 새 화선 없음';
     $('#rep-draw-done').disabled = !(rp.drawMode && rp.pts.length >= 3);
     $('#rep-draw').classList.toggle('mode-on', rp.drawMode);
@@ -3730,6 +3927,10 @@ export function createMockRuntime() {
     rp.perimMode = 'new';
     const I = id ? S.incidents.find((i) => i.id === id) : null;
     $('#rep-name').value = I ? I.name : '';
+    if (dataBridge) {
+      ($('#rep-name') as HTMLInputElement).readOnly = true;
+      if (!I) $('#rep-name').value = NULL_TEXT;
+    }
     $('#rep-addr').value = I ? I.addr : '경북 의성군 ';
     $('#rep-lng').value = I ? String(I.ignition[0]) : '';
     $('#rep-lat').value = I ? String(I.ignition[1]) : '';
@@ -3738,7 +3939,7 @@ export function createMockRuntime() {
     $('#rep-report').value =
       I && I.report_time
         ? isoLocal(new Date(I.report_time))
-        : isoLocal(nowSim());
+        : isoLocal(dataBridge ? new Date() : nowSim());
     $('#rep-text').value = I ? I.report_text : '';
     const cl = I?.caller;
     $('#rep-corg').value = cl?.org || '';
@@ -3764,7 +3965,7 @@ export function createMockRuntime() {
     rp.perimMode = 'new';
     rp.drawMode = false;
     rp.pts = [];
-    if (cp) {
+    if (cp && (!dataBridge || cp.ring.length > 0)) {
       rp.ring = clone(cp.ring);
       rp.ringSource = `${perimTag(cp)} 불러옴`;
       toast(`직전 실측 화선 ${perimTag(cp)}을 불러왔습니다.`);
@@ -3853,6 +4054,7 @@ export function createMockRuntime() {
           onClick: () => {
             try {
               let g = JSON.parse($('#gj-text').value);
+              if (dataBridge) return applyApiGeometry(g);
               if (g.type === 'FeatureCollection')
                 g = (
                   g.features.find(
@@ -3908,6 +4110,7 @@ export function createMockRuntime() {
     renderReporter();
   }
   function saveReport() {
+    if (dataBridge) return void dataBridge.saveReport();
     const rp = state.rep;
     let I = repInc();
     // E2: 종료 처리된 산불에는 보고를 받지 않는다
@@ -4253,7 +4456,7 @@ export function createMockRuntime() {
 
     const by = resSummary();
     $('#admin-resources').innerHTML =
-      `<div class="tot">${RTYPES.map((t) => `<span>${t} 보유 <b>${by[t].보유}</b> · 투입 ${by[t].투입} · 대기 ${by[t].대기} · 정비 ${by[t].정비}</span>`).join('')}</div>
+      `<div class="tot">${RTYPES.map((t) => `<span>${t} 보유 <b>${apiResourceCount(by, t, '보유')}</b> · 투입 ${apiResourceCount(by, t, '투입')} · 대기 ${apiResourceCount(by, t, '대기')} · 정비 ${apiResourceCount(by, t, '정비')}</span>`).join('')}</div>
       <div style="max-height:46vh;overflow:auto"><table class="grid"><thead><tr><th>구분 *</th><th>명칭(호출부호) *</th><th>소속 *</th><th>수량 *</th><th>배치 위치</th><th>상태</th><th style="width:92px">관리</th></tr></thead><tbody>${S.resources.map((r) => `<tr><td><select data-rtype="${r.id}">${RTYPES.map((t) => `<option ${t === r.type ? 'selected' : ''}>${t}</option>`).join('')}</select></td><td><input data-rname="${r.id}" value="${esc(r.name)}" style="width:128px"></td><td><input data-rorg="${r.id}" value="${esc(r.org)}" style="width:118px"></td><td><input data-rqty="${r.id}" type="number" min="1" value="${r.qty}" style="width:50px" ${r.type !== '인력' ? 'disabled' : ''}></td><td><input data-rbase="${r.id}" value="${esc(r.base || '')}" style="width:120px"></td><td><select data-rstatus="${r.id}">${['투입', '대기', '정비'].map((s) => `<option ${s === r.status ? 'selected' : ''}>${s}</option>`).join('')}</select></td><td class="actions"><button data-rsave="${r.id}">저장</button> <button data-rdel="${r.id}">삭제</button></td></tr>`).join('')}</tbody></table></div>
       <div class="form"><label>구분 *<select id="rs-type">${RTYPES.map((t) => `<option>${t}</option>`).join('')}</select></label><label>명칭(호출부호) *<input id="rs-name" placeholder="예: 산림 101호, KFS-H05"></label><label>소속 *<input id="rs-org" placeholder="예: 산림항공본부"></label><label>수량 *<input id="rs-qty" type="number" min="1" value="1" title="인력은 명, 헬기·차량은 1"></label><label>배치 위치<input id="rs-base" placeholder="예: 안동 산림항공관리소"></label><label>상태<select id="rs-status"><option>대기</option><option>투입</option><option>정비</option></select></label><button id="rs-add" class="primary">자원 등록</button></div>`;
     // 필수 값(구분·명칭(호출부호)·소속·수량) 검사 — 빠지면 저장을 막고 빠진 칸을 표시(E1)
@@ -4360,6 +4563,7 @@ export function createMockRuntime() {
       renderAdmin();
       toast(`${name} 등록`);
     };
+    dataBridge?.bindAdmin();
   }
 
   // ------------------------------------------------------------------ 역할 · 로그인 (UC-AUTH-01)
@@ -4418,6 +4622,7 @@ export function createMockRuntime() {
     }
   };
   function login() {
+    if (dataBridge) return void dataBridge.login();
     const id = $('#login-id').value.trim(),
       pw = $('#login-pw').value,
       role = $('#login-role').value,
@@ -4465,12 +4670,13 @@ export function createMockRuntime() {
     state.user = acc.id;
     state.role = acc.role;
     state.loginAt = state.loginAt || Date.now();
-    saveToken();
+    if (!dataBridge) saveToken();
     $('#login-overlay').style.display = 'none';
     $('#chat-log').innerHTML = '';
     state.chatCtx = null;
     setCorrMode(false);
     if (!map) initMap();
+    if (dataBridge && !map.loaded()) map.once('load', refreshApiDisplay);
     applyRole();
     if (state.role === 'admin') {
       renderAdmin();
@@ -4522,6 +4728,7 @@ export function createMockRuntime() {
     $('#draw-hint').classList.remove('on');
   }
   function logout(reason?: string) {
+    if (dataBridge && !reason) return void dataBridge.logout();
     pause();
     cancelModes();
     resetReporterInput();
@@ -4555,6 +4762,238 @@ export function createMockRuntime() {
     renderResources();
     renderProposal();
     renderHistory();
+    if (dataBridge) syncApiValues();
+  }
+
+  // API data formatting only. Existing DOM containers, classes, map styles and
+  // rendering functions remain in use; absent values never become fake zeros.
+  function applyApiGeometry(g) {
+    if (g.type === 'FeatureCollection') {
+      if (g.features?.length !== 1)
+        throw new Error(
+          '한 개의 Polygon 또는 MultiPolygon Feature를 입력해주세요.',
+        );
+      g = g.features[0].geometry;
+    }
+    if (g.type === 'Feature') g = g.geometry;
+    const polygons =
+      g.type === 'Polygon'
+        ? [g.coordinates]
+        : g.type === 'MultiPolygon'
+          ? g.coordinates
+          : null;
+    if (
+      !polygons?.length ||
+      polygons.some(
+        (p) =>
+          !p.length ||
+          p.some(
+            (r) =>
+              r.length < 4 ||
+              r.some(
+                (c) =>
+                  c.length < 2 ||
+                  !Number.isFinite(c[0]) ||
+                  !Number.isFinite(c[1]),
+              ) ||
+              r[0][0] !== r.at(-1)[0] ||
+              r[0][1] !== r.at(-1)[1],
+          ),
+      )
+    )
+      throw new Error('닫힌 Polygon/MultiPolygon 좌표가 필요합니다.');
+    const area = polygons.reduce(
+      (total, p) =>
+        total +
+        originalRingAreaHa(p[0]) -
+        p.slice(1).reduce((sum, hole) => sum + originalRingAreaHa(hole), 0),
+      0,
+    );
+    state.rep.ring = displayRing(g, area);
+    state.rep.ringSource = 'GeoJSON';
+    state.rep.drawMode = false;
+    renderReporter();
+    toast(`GeoJSON 적용 · ${fmt1(area)} ha`);
+    return;
+  }
+  function apiWeatherText() {
+    const w = dataBridge.weather();
+    return `${w?.wind_dir_name || (w?.wind_dir == null ? NULL_TEXT : dirName(w.wind_dir))}풍 ${w?.wind_speed ?? NULL_TEXT} m/s · 습도 ${w?.humidity ?? NULL_TEXT}% · 기온 ${w?.temp ?? NULL_TEXT}℃ · 시정 ${NULL_TEXT}`;
+  }
+  function apiVertexCount(ring) {
+    const geometry = shapeOf(ring)?.geometry;
+    if (geometry?.type === 'MultiPolygon')
+      return geometry.coordinates
+        .flat()
+        .reduce(
+          (sum, coordinates) => sum + Math.max(0, coordinates.length - 1),
+          0,
+        );
+    if (geometry?.type === 'Polygon')
+      return geometry.coordinates.reduce(
+        (sum, coordinates) => sum + Math.max(0, coordinates.length - 1),
+        0,
+      );
+    return dataBridge && !ring.length ? NULL_TEXT : ring.length - 1;
+  }
+  function apiLineGeometry(coordinates): LineString | MultiLineString {
+    const geometry = shapeOf(coordinates)?.geometry;
+    if (geometry?.type === 'MultiPolygon')
+      return {
+        type: 'MultiLineString',
+        coordinates: geometry.coordinates.flat(),
+      };
+    if (geometry?.type === 'Polygon')
+      return { type: 'MultiLineString', coordinates: geometry.coordinates };
+    return { type: 'LineString', coordinates };
+  }
+  function apiResourceCount(original, type, status) {
+    return dataBridge
+      ? (dataBridge.counts()[type]?.[status] ?? NULL_TEXT)
+      : original[type][status];
+  }
+  function syncApiValues() {
+    if (!dataBridge) return;
+    const pending = dataBridge.pendingIncident();
+    const operation = dataBridge.predictionOperation();
+    if ($('#prop-meta')) $('#prop-meta').title = dataBridge.proposalStale() ? '이 제안은 최신 예측 또는 현재 정정을 아직 반영하지 않았습니다.' : '';
+    const predictionFailure = dataBridge.predictionFailure();
+    if (!pending && state.role !== 'reporter' && inc().status !== '종료') {
+      const note = $('#pred-note');
+      if (predictionFailure || operation?.status === 'FAILED') {
+        note.textContent = IS().predicted ? '예측 실패 · 이전 결과 표시' : '예측 실패';
+        note.title = predictionFailure instanceof Error ? predictionFailure.message : operation?.error?.message || '';
+      } else if (operation && ['QUEUED', 'RUNNING'].includes(operation.status)) {
+        note.textContent = (operation.status === 'QUEUED' ? '예측 대기 중' : '예측 계산 중') + (IS().predicted ? ' · 이전 결과' : '');
+        note.title = operation.stage || '';
+      } else if (operation?.status === 'SUCCEEDED' && operation.result?.prediction_id !== dataBridge.predictionId()) {
+        note.textContent = '예측 결과 불러오는 중';
+      }
+    }
+    const risk = dataBridge.riskData();
+    if ($('#risk-box')) $('#risk-box').title = IS().riskStatus === 'failed' ? '위험도 조회 실패' : risk ? `${risk.status} · ${risk.method_version || '[필요한 정보: 위험도 계산 방식]'}${risk.unavailable_reasons.length ? ' · ' + risk.unavailable_reasons.join(' · ') : ''}` : '위험도 조회 결과 없음';
+    const missing = !!pending || dataBridge.empty();
+    if (state.markers.f0)
+      state.markers.f0.getElement().style.display = missing ? 'none' : '';
+    if (missing && state.incId === '__NULL__') {
+      $('#ip-name').textContent = NULL_TEXT;
+      $('#ip-badge').textContent = NULL_TEXT;
+      if ($('#btn-predict')) $('#btn-predict').disabled = true;
+    }
+    if (pending) {
+      $$('#st-detail td:not(.k)').forEach((cell) => {
+        cell.textContent = '불러오는 중…';
+      });
+      $$('#st-actions button').forEach((button) => {
+        button.disabled = true;
+      });
+      $('#btn-predict').disabled = true;
+      // Clear only source DATA while changing identity; retain layers and styles.
+      for (const id of ['f0', 'fire-cum', 'fire-past', 'fire-next', 'risk']) {
+        const source = map?.getSource(id) as
+          maplibregl.GeoJSONSource | undefined;
+        source?.setData(fc([]));
+      }
+    }
+    $$('#st-detail tr').forEach((row) => {
+      const cells = row.querySelectorAll('td');
+      if (cells[0]?.textContent === '기상') {
+        const weather = dataBridge.predictionWeather();
+        const failure = dataBridge.predictionWeatherFailure();
+        cells[1].title = failure ? `예측 사용 기상 조회 실패: ${failure instanceof Error ? failure.message : String(failure)}` : weather ? `예측 사용 기상 (${weather.source})\n${weather.hours.map(h => `${fmtIso(h.at)} · 풍향 ${h.wind_dir ?? '[필요한 정보: 예측 기상 풍향]'}° · 풍속 ${h.wind_speed ?? '[필요한 정보: 예측 기상 풍속]'}m/s · 기온 ${h.temp ?? '[필요한 정보: 예측 기상 기온]'}℃ · 습도 ${h.humidity ?? '[필요한 정보: 예측 기상 습도]'}%`).join('\n')}` : '[필요한 정보: 해당 예측에 사용한 기상 데이터]';
+        if (dataBridge.weather()?.stale) cells[1].title = '현재 관측 갱신 지연 · 마지막 관측값 표시\n' + cells[1].title;
+      }
+      if (cells[0]?.textContent === '발생 일시' && !inc().start_time) {
+        const span = cells[1].querySelector('span');
+        if (span) {
+          span.textContent = '미확인';
+          span.title = '[필요한 정보: 산불 발생 시각]';
+        }
+      }
+      if (
+        !pending &&
+        cells[0]?.textContent === '접수 기록' &&
+        !inc().intake.length
+      )
+        cells[1].textContent = '[필요한 정보: 기관별 접수 이력]';
+      if (cells[2]?.textContent === '공식 단계')
+        cells[3].title = '[필요한 정보: 공식 발령 단계·위기경보]';
+      if (cells[0]?.textContent === '발생 장소' && missing) {
+        const coordinates = cells[1].querySelector('span');
+        if (coordinates) coordinates.textContent = `발화 위치 ${NULL_TEXT}`;
+      }
+    });
+    $$('#inc-list .muted').forEach((element) => {
+      if (element.textContent === '미확인') {
+        // Keep this narrow column's original compact empty state.
+        element.title = '[필요한 정보: 산불 발생 시각]';
+      }
+    });
+    if (state.role === 'reporter' && !state.rep.intake.length) {
+      const empty = $('#rep-intake .muted');
+      if (empty) empty.textContent = NULL_TEXT;
+    }
+  }
+  function refreshApiDisplay() {
+    if (dataBridge?.pendingIncident()) {
+      mapRequest?.abort(); entityRequest?.abort(); mapQueryKey = '';
+    }
+    if (state.markers.f0) state.markers.f0.setLngLat(inc().ignition);
+    renderAll();
+    setT(IS().t);
+    syncApiValues();
+  }
+  let apiAnswerSequence = 0;
+  function addApiAnswer(message: QaMessage) {
+    const run = proposalView(null, S, null);
+    const block = run.blocks[0];
+    block.id = `api-qa-${++apiAnswerSequence}`;
+    block.name = 'AI 질의응답';
+    block.evidence = message.citations.map((citation, index) => {
+      const key = `${block.id}:${index}`;
+      S.evidence[key] = {
+        doc: citation.doc_name || NULL_TEXT,
+        page: citation.page == null ? NULL_TEXT : String(citation.page),
+        section: citation.section || NULL_TEXT,
+        text: citation.text || NULL_TEXT,
+      };
+      return { k: citation.k, key };
+    });
+    block.text =
+      (message.answer || NULL_TEXT) +
+      block.evidence
+        .filter((e) => !message.answer.includes(`[${e.k}]`))
+        .map((e) => `[${e.k}]`)
+        .join('');
+    const element = addMsg('bot', citeHTML(block.text, block.id));
+    element
+      .querySelectorAll<HTMLElement>('.cite')
+      .forEach(
+        (citation) =>
+          (citation.onclick = () =>
+            openEvidence(run, block.id, Number(citation.dataset.k))),
+      );
+  }
+  function apiCorrectionPreview(
+    preview: CorrectionPreview,
+    confirm: () => void,
+  ) {
+    const rows = preview.changes.map((change) => [
+      change.target === 'village'
+        ? change.target_name || change.target_id
+        : change.target,
+      change.label || change.item,
+      change.before,
+      change.after,
+    ]);
+    proposeCorrection(null, preview.input_text, {
+      rows,
+      notes: [
+        ...preview.notes,
+        ...preview.ignored.map((item) => `${item.text}: ${item.reason}`),
+      ],
+      confirm,
+    });
   }
 
   // ------------------------------------------------------------------ 바인딩
@@ -4689,6 +5128,9 @@ export function createMockRuntime() {
     get map() {
       return map;
     },
+    get dataMode() {
+      return apiMode || 'legacy';
+    },
     ringAreaHa,
     firePolygon,
     runPrediction,
@@ -4703,8 +5145,108 @@ export function createMockRuntime() {
     inc,
     events: state.events,
   };
+  if (apiMode) {
+    const mock =
+      apiMode === 'mock' ? screenMockOptions(S, computeRisk()) : undefined;
+    if (mock) {
+      const params = new URLSearchParams(location.search);
+      const scenarios = {};
+      for (const id of (params.get('apiEmpty') || '')
+        .split(',')
+        .filter(Boolean))
+        scenarios[id] = 'empty';
+      for (const id of (params.get('apiFail') || '').split(',').filter(Boolean))
+        scenarios[id] = 'unavailable';
+      mock.scenarios = scenarios;
+    }
+    const source = createApiDataSource(
+      createApiClientFromEnv(
+        {
+          VITE_API_MODE: apiMode,
+          VITE_API_BASE_URL: import.meta.env.VITE_API_BASE_URL,
+        },
+        {
+          mock,
+          onUnauthorized: () => {
+            dataBridge?.expire('인증 정보 만료 또는 무효');
+          },
+        },
+      ),
+    );
+    dataBridge = createScreenBridge(
+      source,
+      {
+        S,
+        state,
+        IS,
+        refresh: refreshApiDisplay,
+        enter: (account) => {
+          enterSession(account);
+          if (map.loaded()) bindApiMap();
+          else map.once('load', bindApiMap);
+        },
+        leave: (reason) => {
+          clearApiMap();
+          logout(reason || 'API 세션 종료');
+          state.user = null;
+          state.loginAt = null;
+        },
+        selected: (id, fly = true) => {
+          suppressSelectionLoad = true;
+          try {
+            selectIncident(id, fly);
+          } finally {
+            suppressSelectionLoad = false;
+          }
+          scheduleApiMap();
+        },
+        reportForm: loadRepForm,
+        admin: renderAdmin,
+        notice: failNotice,
+        loginError: (message) => {
+          $('#login-err').textContent = message;
+        },
+        loginBusy: (busy) => {
+          $('#login-btn').disabled = busy;
+          if (busy) $('#login-btn').setAttribute('aria-busy', 'true');
+          else $('#login-btn').removeAttribute('aria-busy');
+        },
+        baseAt: (at) => {
+          T0.setTime(Date.parse(at));
+        },
+        busy: (busy) => {
+          state.predicting = busy;
+          renderPredBar();
+          if (busy) $('#btn-predict').textContent = '예측 중…';
+          syncApiValues();
+        },
+        predictionReady: () => {
+          if (map && IS().slices[7]?.length) fitAll();
+        },
+        chatBusy: (busy) => {
+          chatPending = busy;
+          updateChatBusy();
+        },
+        message: (kind, message) => {
+          addMsg(kind, esc(message));
+        },
+        answer: addApiAnswer,
+        preview: apiCorrectionPreview,
+        modal: openModal,
+        diff: showDiff,
+        issued: (account, password, title = '계정 발급 완료') =>
+          showIssued(title, account, password),
+        proposalSelected: () => {
+          showTab('proposal');
+          $('#ipt-proposal').closest('.sp-body').scrollTop = 0;
+        },
+      },
+      { accountAdminAreaId: import.meta.env.VITE_ACCOUNT_ADMIN_AREA_ID },
+    );
+    mapSource = source;
+  }
   window.__mock = api;
-  resumeSession();
+  if (!dataBridge) resumeSession();
   const actions = {
     login,
     fillDemoAccount,
@@ -4749,6 +5291,7 @@ export function createMockRuntime() {
     toggleLayer(button: HTMLElement) {
       button.classList.toggle('off');
       applyLayerVisibility();
+      scheduleApiMap();
     },
     showTab,
     goToFire() {
@@ -4764,6 +5307,14 @@ export function createMockRuntime() {
       map?.setZoom(Number(value));
     },
     fitAll() {
+      if (
+        dataBridge &&
+        !actualRing().length &&
+        !IS().slices.some((ring) => ring.length)
+      ) {
+        toast(`${NULL_TEXT} 표시할 화선·예측 도형이 없습니다.`);
+        return;
+      }
       if (map) fitAll();
     },
     north() {
@@ -4858,6 +5409,8 @@ export function createMockRuntime() {
     ...api,
     actions,
     dispose() {
+      mapRequest?.abort(); entityRequest?.abort();
+      dataBridge?.dispose();
       lifecycle.dispose();
       headerResizeObserver.disconnect();
       Object.values(state.markers).forEach((marker) => marker.remove());

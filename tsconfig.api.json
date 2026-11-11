@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "strict": true },
+  "include": ["src/api/**/*.ts", "tests/api-contract-types.ts"]
+}

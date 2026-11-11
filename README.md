@@ -79,7 +79,7 @@ npm run build
 npm run preview
 ```
 
-`build`는 타입 검사 후 `dist/`를 생성합니다. `preview`는 [http://127.0.0.1:4173](http://127.0.0.1:4173)에서 빌드 결과를 제공합니다. `test`는 원본 v4 계산 결과와 비교하는 회귀 테스트 6개입니다. 검증 결과는 [검증 기록](docs/VERIFICATION.md)에 정리했습니다.
+`build`는 타입 검사 후 `dist/`를 생성합니다. `preview`는 [http://127.0.0.1:4173](http://127.0.0.1:4173)에서 빌드 결과를 제공합니다. `test`는 원본 v4 계산 결과와 비교하는 회귀 테스트 6개와 API·UI 보존 테스트를 실행합니다. 기존 검증 결과는 [검증 기록](docs/VERIFICATION.md), 추가 검증은 [API 연동 준비](docs/API-DATA-INTEGRATION.md)에 정리했습니다.
 
 ## 실패·병합 시연
 
@@ -99,3 +99,11 @@ npm run preview
 여러 실패 항목은 쉼표로 연결할 수 있습니다. 일부 실패 플래그는 원본과 같이 한 번 사용된 뒤 해제됩니다.
 
 원본 요구사항과 시나리오는 [원본 명세](docs/ORIGINAL_REQUIREMENTS.md)에 보관했습니다.
+
+## 기존 화면의 API 데이터 연결
+
+React 화면·CSS·지도 스타일·그리기 도구를 유지하고, `src/api/`에 확정 명세의 타입·mock/http 호출·정상/빈 값/오류 목업과 기존 runtime의 데이터 연결을 추가했습니다. `VITE_API_MODE` 미설정 시 기존 시연이며, `.env.example`을 `.env.local`로 복사하면 EC2 개발 프록시에 연결합니다. 실제 시험 계정을 직접 입력해야 합니다. 독립적인 API 목업 점검은 `VITE_API_MODE=mock`으로 바꿔 실행합니다.
+
+연결할 수 없는 정보는 `[NULL]`로 표시합니다. 미확정 API, 명세에 없는 필드, 14개 UI 항목과 12개 API 항목의 매핑 차이를 구분했습니다. 전체 공간 레이어 교체와 계정 발급의 관할 ID 등 남은 범위는 [데이터 공백 목록](docs/API-DATA-GAPS.md), 실행·연결 범위·검증은 [API 데이터 연결](docs/API-DATA-INTEGRATION.md)을 확인하세요.
+
+`npm run typecheck`는 API strict 검사도 실행합니다. `npm test`는 기존 계산 6개와 API·데이터 어댑터·UI 보존을 검사하며, `npm run test:browser`로 HTTP 모의 응답을 사용한 화면 흐름을 점검할 수 있습니다. 다른 서버와 충돌하면 `WFG_TEST_PORT=5294 npm run test:browser`처럼 별도 포트를 지정합니다. 2026-11-11 실제 EC2 검증 범위는 AUTH-01~03이며 자세한 결과는 [인증 연동 검증](docs/AUTH-INTEGRATION.md)을 확인하세요.
