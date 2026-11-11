@@ -346,6 +346,13 @@ export interface ResourceBase {
   distance_km: number | null;
   jurisdiction: 'LOCAL' | 'SUPPORT' | null;
 }
+export interface ResourceBaseCreateRequest {
+  name: string;
+  org_type: string;
+  coverage_area_ids: Id[];
+  geometry?: Point | null;
+}
+export type ResourceBaseUpdateRequest = Partial<ResourceBaseCreateRequest>;
 export interface Resource {
   id: Id;
   kind: ResourceKind;

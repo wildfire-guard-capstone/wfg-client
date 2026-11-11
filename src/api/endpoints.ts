@@ -104,6 +104,9 @@ export interface ApiContracts {
     C.ResourceSummary
   >;
   'BASE-01': Contract<Read<never, BaseQuery>, C.Page<C.ResourceBase>>;
+  'BASE-02': Contract<{ body: C.ResourceBaseCreateRequest }, C.ResourceBase>;
+  'BASE-03': Contract<Write<{ base_id: C.Id }, C.ResourceBaseUpdateRequest>, C.ResourceBase>;
+  'BASE-04': Contract<Read<{ base_id: C.Id }>, undefined>;
   'RES-03': Contract<{ body: C.ResourceCreateRequest }, C.Resource>;
   'RES-04': Contract<Write<{ resource_id: C.Id }, C.ResourceUpdateRequest>, C.Resource>;
   'RES-05': Contract<Read<{ resource_id: C.Id }>, undefined>;
@@ -333,6 +336,9 @@ export const endpoints = {
   'RES-03': { method: 'POST', path: '/admin/resources', status: 201, roles: ['ADMIN'], priority: 'P3', body: true },
   'RES-04': { method: 'PATCH', path: '/admin/resources/{resource_id}', status: 200, roles: ['ADMIN'], priority: 'P3', body: true },
   'RES-05': { method: 'DELETE', path: '/admin/resources/{resource_id}', status: 204, roles: ['ADMIN'], priority: 'P3' },
+  'BASE-02': { method: 'POST', path: '/admin/resource-bases', status: 201, roles: ['ADMIN'], priority: 'P3', body: true },
+  'BASE-03': { method: 'PATCH', path: '/admin/resource-bases/{base_id}', status: 200, roles: ['ADMIN'], priority: 'P3', body: true },
+  'BASE-04': { method: 'DELETE', path: '/admin/resource-bases/{base_id}', status: 204, roles: ['ADMIN'], priority: 'P3' },
   'BASE-01': {
     method: 'GET',
     path: '/resource-bases',

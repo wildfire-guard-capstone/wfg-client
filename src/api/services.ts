@@ -42,6 +42,7 @@ export function createApiServices(client: ApiClient) {
       update: bind('RES-04'),
       remove: bind('RES-05'),
     },
+    bases: { list: bind('BASE-01'), create: bind('BASE-02'), update: bind('BASE-03'), remove: bind('BASE-04') },
     proposals: {
       list: bind('PROP-01'),
       latest: bind('PROP-02'),

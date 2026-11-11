@@ -551,6 +551,9 @@ export function createFixtures(): ResponseMap {
       incident_linked: { HELICOPTER: 0, VEHICLE: 0 },
     },
     'BASE-01': page([base]),
+    'BASE-02': base,
+    'BASE-03': base,
+    'BASE-04': undefined,
     'PROP-01': page([
       version,
       { ...version, id: '70', version: 'v1.0', changed_count: null },

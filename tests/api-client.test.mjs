@@ -86,6 +86,9 @@ const requests = {
   'RES-04': { path: { resource_id: '61' }, body: { status: 'MAINTENANCE' } },
   'RES-05': { path: { resource_id: '61' } },
   'BASE-01': { query: { incident_id: '100' } },
+  'BASE-02': { body: { name: '테스트 기지', org_type: '테스트', coverage_area_ids: ['10'], geometry: null } },
+  'BASE-03': { path: { base_id: '31' }, body: { geometry: { type: 'Point', coordinates: [128, 36] } } },
+  'BASE-04': { path: { base_id: '31' } },
   'PROP-01': { path },
   'PROP-02': { path },
   'PROP-03': { path: proposal },
@@ -116,7 +119,7 @@ const requests = {
   },
 };
 const agreed =
-  'AUTH-01 AUTH-02 AUTH-03 USR-01 USR-02 INC-01 INC-02 INC-03 INC-04 PER-01 PER-02 PER-03 PRED-01 PRED-02 PRED-03 PRED-04 PRED-05 RISK-01 WTH-01 MAP-01 MAP-02 MAP-03 MAP-04 BASE-01 RES-01 RES-02 RES-03 RES-04 RES-05 PROP-01 PROP-02 PROP-03 PROP-04 PROP-05 AI-01 AI-02 COR-01 COR-02 LOG-01'.split(
+  'AUTH-01 AUTH-02 AUTH-03 USR-01 USR-02 INC-01 INC-02 INC-03 INC-04 PER-01 PER-02 PER-03 PRED-01 PRED-02 PRED-03 PRED-04 PRED-05 RISK-01 WTH-01 MAP-01 MAP-02 MAP-03 MAP-04 BASE-01 BASE-02 BASE-03 BASE-04 RES-01 RES-02 RES-03 RES-04 RES-05 PROP-01 PROP-02 PROP-03 PROP-04 PROP-05 AI-01 AI-02 COR-01 COR-02 LOG-01'.split(
     ' ',
   );
 const success = (data, status = 200) =>
@@ -136,13 +139,13 @@ const failure = (status, code = 'SERVER_CODE') =>
     { status },
   );
 
-test('active contracts include confirmed MAP-03/04, P1 14/P2 18/P3 7', () => {
+test('active contracts include confirmed MAP-03/04, P1 14/P2 18/P3 10', () => {
   assert.deepEqual([...API_IDS].sort(), agreed.sort());
   assert.deepEqual(
     ['P1', 'P2', 'P3'].map(
       (p) => API_IDS.filter((id) => endpoints[id].priority === p).length,
     ),
-    [14, 18, 7],
+    [14, 18, 10],
   );
   assert.deepEqual(Object.keys(createFixtures()).sort(), agreed);
 });

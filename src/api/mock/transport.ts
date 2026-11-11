@@ -417,7 +417,7 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
       ],
       conflict: [
         409,
-        route.id === 'PRED-01' ? 'PREDICTION_RUNNING' : 'STALE_PERIMETER',
+        route.id === 'BASE-04' ? 'BASE_IN_USE' : route.id === 'PRED-01' ? 'PREDICTION_RUNNING' : 'STALE_PERIMETER',
         '목업 충돌 예시입니다.',
       ],
       unavailable: [
@@ -465,6 +465,8 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
         body = parsed;
       }
       const allowedKeys: Partial<Record<ApiId, string[]>> = {
+        'BASE-02': ['name','org_type','coverage_area_ids','geometry'],
+        'BASE-03': ['name','org_type','coverage_area_ids','geometry'],
         'RES-03': ['kind','name','base_id','status','attrs','deployed_incident_id'],
         'RES-04': ['kind','name','base_id','status','attrs','deployed_incident_id'],
         'AUTH-01': ['login_id', 'password', 'role'],
@@ -938,11 +940,12 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
           if (name.length > 50) invalid('name', '50자 이내로 입력해주세요.');
           if (!['HELICOPTER','VEHICLE'].includes(String(merged.kind))) invalid('kind', '자원 종류를 확인해주세요.');
           const base_id = requiredString(merged, 'base_id');
-          if (!bases.some(b => b.id === base_id)) fail(404, 'BASE_NOT_FOUND', '기지를 찾지 못했습니다.');
-          if (resources.some(r => r.id !== current?.id && r.name === name)) fail(409, 'RESOURCE_NAME_EXISTS', '중복 자원명입니다.');
+          if (!bases.some(b => b.id === base_id)) fail(422, 'INVALID_BASE', '등록된 기지를 골라야 합니다.');
+          if (resources.some(r => r.id !== current?.id && r.name === name)) fail(409, 'DUPLICATE_RESOURCE_NAME', '중복 자원명입니다.');
           const status = merged.status ?? 'AVAILABLE';
           if (!['AVAILABLE','DEPLOYED','MAINTENANCE'].includes(String(status))) invalid('status', '자원 상태를 확인해주세요.');
           if (merged.attrs !== undefined && (!isRecord(merged.attrs) || (merged.attrs.capacity_l !== undefined && (typeof merged.attrs.capacity_l !== 'number' || merged.attrs.capacity_l < 0)))) invalid('attrs', '자원 속성을 확인해주세요.');
+          if (status !== 'DEPLOYED' && body.deployed_incident_id != null) invalid('deployed_incident_id', '투입 상태에서만 산불을 연결합니다.');
           const deployed = status === 'DEPLOYED' ? requiredString(merged, 'deployed_incident_id') : null;
           if (deployed) openIncident(deployed);
           const row: C.Resource = { id: current?.id ?? next(), kind: merged.kind as C.ResourceKind, name, base_id, status: status as C.ResourceStatus, attrs: (merged.attrs ?? {}) as C.JsonObject, deployed_incident_id: deployed };
@@ -986,9 +989,38 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
           };
           break;
         }
+        case 'BASE-02':
+        case 'BASE-03': {
+          const current = route.id === 'BASE-03' ? bases.find(b => b.id === params.base_id) : undefined;
+          if (route.id === 'BASE-03' && !current) fail(404, 'NOT_FOUND', '기지를 찾지 못했습니다.');
+          if (!Object.keys(body).length) invalid('body', '변경할 필드가 필요합니다.');
+          const merged = { ...current, ...body };
+          const name = requiredString(merged, 'name'), org_type = requiredString(merged, 'org_type');
+          if (name.length > 100 || org_type.length > 20) invalid('body', '기지명 또는 기관 유형의 길이를 확인해주세요.');
+          if (bases.some(b => b.id !== current?.id && b.name === name)) fail(409, 'DUPLICATE_BASE_NAME', '이미 있는 기지 이름입니다.');
+          // Existing base coverage and explicit administrative-area fixtures are the mock's known regions.
+          const coverage = merged.coverage_area_ids;
+          const allowedAreas = new Set([...fixture['BASE-01'].items.flatMap(b => b.coverage_area_ids), ...fixture['MAP-04'].items.filter(a => a.level === 'SIDO' || a.level === 'SIGUNGU').map(a => a.id)]);
+          if (!Array.isArray(coverage) || coverage.some(id => !allowedAreas.has(String(id)))) fail(422, 'INVALID_COVERAGE', '관할은 등록된 시도 또는 시군구만 고를 수 있습니다.');
+          const point = merged.geometry ?? null;
+          if (point !== null && (!isRecord(point) || point.type !== 'Point' || !Array.isArray(point.coordinates) || point.coordinates.length !== 2 || point.coordinates.some(v => typeof v !== 'number' || !Number.isFinite(v)))) invalid('geometry', 'Point 또는 null이 필요합니다.');
+          const row: C.ResourceBase = { id: current?.id ?? next(), name, org_type, coverage_area_ids: [...new Set(coverage.map(String))], geometry: point as C.ResourceBase['geometry'], distance_km: null, jurisdiction: null };
+          if (current) bases[bases.indexOf(current)] = row;
+          else bases.push(row);
+          data = row;
+          break;
+        }
+        case 'BASE-04': {
+          const index = bases.findIndex(b => b.id === params.base_id);
+          if (index < 0) fail(404, 'NOT_FOUND', '기지를 찾지 못했습니다.');
+          if (resources.some(r => r.base_id === params.base_id)) fail(409, 'BASE_IN_USE', '기지에 자원이 남아 있습니다.');
+          bases.splice(index, 1);
+          data = undefined;
+          break;
+        }
         case 'BASE-01':
           data = paginate(
-            fixture['BASE-01'].items
+            bases
               .filter(
                 (b) =>
                   !query.has('org_type') ||

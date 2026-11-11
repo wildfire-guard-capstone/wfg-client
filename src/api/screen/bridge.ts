@@ -82,6 +82,7 @@ export function createScreenBridge(
   const rawResources = new Map<string, C.Resource>();
   const resourceBases = new Map<string, C.ResourceBase>();
   const resourceChanges = new Set<string>();
+  const baseChanges = new Set<string>();
   let resourceTicket = 0;
   let resourceContext: string | undefined;
   let proposalTicket = 0;
@@ -139,6 +140,7 @@ export function createScreenBridge(
     rawResources.clear();
     resourceBases.clear();
     resourceChanges.clear();
+    baseChanges.clear();
     S.resources = [];
     S.resources_fetch_status = 'loading';
     for (const c of requests) c.abort();
@@ -251,6 +253,36 @@ export function createScreenBridge(
     }
   }
 
+  // No base-management controls exist in the current UI. Keep a guarded action
+  // for consumers, with the same refresh/error semantics as resource management.
+  async function changeBase(change:
+    | { action: 'create'; body: C.ResourceBaseCreateRequest }
+    | { action: 'update'; id: string; body: C.ResourceBaseUpdateRequest }
+    | { action: 'remove'; id: string }
+  ) {
+    if (currentUser?.role !== 'ADMIN' || state.role !== 'admin') {
+      host.notice('관리자만 기지를 변경할 수 있습니다.');
+      return;
+    }
+    const key = change.action === 'create' ? 'create' : change.id;
+    if (baseChanges.has(key)) return;
+    const epoch = generation;
+    baseChanges.add(key);
+    try {
+      return await task(async (signal, epoch) => {
+        let result: C.ResourceBase | undefined;
+        if (change.action === 'create') result = await source.api.bases.create({ body: change.body, signal });
+        else if (change.action === 'update') result = await source.api.bases.update({ path: { base_id: change.id }, body: change.body, signal });
+        else await source.api.bases.remove({ path: { base_id: change.id }, signal });
+        if (!alive(epoch)) return;
+        await resources(undefined, signal, epoch);
+        if (alive(epoch)) host.admin();
+        return result;
+      });
+    } finally {
+      if (alive(epoch)) baseChanges.delete(key);
+    }
+  }
   function install(data: IncidentData) {
     raw.set(data.incident.id, data.incident);
     snapshot.set(data.incident.id, data);
@@ -1146,6 +1178,7 @@ export function createScreenBridge(
     saveReport,
     bindAdmin,
     changeResource,
+    changeBase,
     counts: () => counts,
     incidentRows: () =>
       [...incidentSummaries.values()].map((row) =>
