@@ -67,11 +67,53 @@ function baseUrl(value: string): string {
   return trimmed;
 }
 
+function authResponseIssues(id: ApiId, data: unknown): string[] {
+  if (id !== 'AUTH-01' && id !== 'AUTH-02') return [];
+  const issues: string[] = [];
+  const record = isRecord(data) ? data : {};
+  const user = id === 'AUTH-01' ? record.user : data;
+  const prefix = id === 'AUTH-01' ? 'user.' : '';
+  if (id === 'AUTH-01') {
+    if (typeof record.access_token !== 'string' || !record.access_token.trim())
+      issues.push('access_token');
+    if (record.token_type !== 'bearer') issues.push('token_type');
+    if (
+      !Number.isSafeInteger(record.expires_in) ||
+      Number(record.expires_in) <= 0
+    )
+      issues.push('expires_in');
+  }
+  if (!isRecord(user))
+    return [...issues, id === 'AUTH-01' ? 'user' : 'User 객체'];
+  for (const field of ['login_id', 'name', 'organization'])
+    if (typeof user[field] !== 'string') issues.push(`${prefix}${field}`);
+  if (typeof user.id !== 'string' || !/^[1-9]\d*$/.test(user.id))
+    issues.push(`${prefix}id`);
+  if (!['COMMANDER', 'VIEWER', 'REPORTER', 'ADMIN'].includes(String(user.role)))
+    issues.push(`${prefix}role`);
+  if (
+    user.admin_area_id !== null &&
+    (typeof user.admin_area_id !== 'string' ||
+      !/^[1-9]\d*$/.test(user.admin_area_id))
+  )
+    issues.push(`${prefix}admin_area_id`);
+  return issues;
+}
+
 export function createApiClient(options: ApiClientOptions): ApiClient {
   if (options.mode !== 'mock' && options.mode !== 'http')
     throw new Error('API mode는 mock 또는 http입니다.');
   const base = baseUrl(options.baseUrl ?? '/api/v1');
   const tokens = options.tokenStore ?? createMemoryTokenStore();
+  let sessionRevision = 0;
+  const clearSession = () => {
+    sessionRevision++;
+    tokens.clear();
+  };
+  const setAccessToken = (token: string) => {
+    sessionRevision++;
+    tokens.set(token);
+  };
   const fetcher: Fetcher =
     options.mode === 'mock'
       ? createMockFetch(options.mock)
@@ -109,6 +151,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       if (value !== undefined && value !== null) query.set(key, String(value));
     }
     const headers = new Headers({ Accept: 'application/json' });
+    const revision = sessionRevision;
     const token = id === 'AUTH-01' ? null : tokens.get();
     if (token) headers.set('Authorization', `Bearer ${token}`);
     if (endpoint.idempotent) {
@@ -160,7 +203,12 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
             status: 204,
             message: '예상하지 않은 빈 응답입니다.',
           });
-        if (id === 'AUTH-03' && tokens.get() === token) tokens.clear();
+        if (
+          id === 'AUTH-03' &&
+          sessionRevision === revision &&
+          tokens.get() === token
+        )
+          clearSession();
         return undefined as ResponseFor<K>;
       }
       const text = await response.text();
@@ -175,9 +223,10 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         if (
           response.status === 401 &&
           id !== 'AUTH-01' &&
+          sessionRevision === revision &&
           tokens.get() === token
         ) {
-          tokens.clear();
+          clearSession();
           options.onUnauthorized?.();
         }
         if (isErrorEnvelope(payload))
@@ -217,20 +266,26 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         });
       }
       const envelope = payload as unknown as SuccessEnvelope<ResponseFor<K>>;
+      const issues = authResponseIssues(id, envelope.data);
+      if (issues.length)
+        throw new ApiError({
+          endpoint: id,
+          kind: 'protocol',
+          code: 'INVALID_RESPONSE',
+          status: response.status,
+          requestId: payload.meta.request_id,
+          message: `[필요한 정보: ${id} 응답의 유효한 ${issues.join(', ')}]`,
+        });
       if (id === 'AUTH-01') {
-        if (
-          !isRecord(payload.data) ||
-          typeof payload.data.access_token !== 'string' ||
-          !payload.data.access_token
-        ) {
+        if (sessionRevision !== revision) {
           throw new ApiError({
             endpoint: id,
-            kind: 'protocol',
-            code: 'INVALID_RESPONSE',
-            message: '로그인 응답에 토큰이 없습니다.',
+            kind: 'configuration',
+            code: 'SESSION_CHANGED',
+            message: '로그인 중 세션이 변경되었습니다. 다시 로그인하십시오.',
           });
         }
-        tokens.set((envelope.data as AuthToken).access_token);
+        setAccessToken((envelope.data as AuthToken).access_token);
       }
       return envelope.data;
     } catch (cause) {
@@ -261,8 +316,8 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     mode: options.mode,
     request,
     getAccessToken: () => tokens.get(),
-    setAccessToken: (token) => tokens.set(token),
-    clearSession: () => tokens.clear(),
+    setAccessToken,
+    clearSession,
   };
 }
 

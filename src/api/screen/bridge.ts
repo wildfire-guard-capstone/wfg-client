@@ -40,6 +40,7 @@ export interface ScreenHost {
   admin: () => void;
   notice: (message: string) => void;
   loginError: (message: string) => void;
+  loginBusy: (busy: boolean) => void;
   baseAt: (at: string) => void;
   busy: (busy: boolean) => void;
   predictionReady: () => void;
@@ -79,9 +80,11 @@ export function createScreenBridge(
     selection = 0,
     disposed = false,
     loading = false,
+    loggingOut = false,
     chatting = false,
     saving = false,
     issuing = false;
+  let expiryTimer: ReturnType<typeof setTimeout> | undefined;
   const confirming = new Set<string>();
   let counts = resourceCounts(null);
   let currentWeather: C.WeatherNow | null = null;
@@ -119,10 +122,29 @@ export function createScreenBridge(
     currentWeather = null;
     counts = resourceCounts(null);
     currentUser = null;
+    clearTimeout(expiryTimer);
+    expiryTimer = undefined;
     loading = false;
+    host.loginBusy(false);
     chatting = false;
     host.busy(false);
     host.chatBusy(false);
+  }
+  function expire(reason = '인증 토큰 만료') {
+    const hadSession = currentUser !== null || loading || state.role !== null;
+    source.client.clearSession();
+    reset();
+    if (hadSession && !disposed) host.leave(reason);
+  }
+  function scheduleExpiry(expiresIn: number) {
+    clearTimeout(expiryTimer);
+    const expiresAt = Date.now() + expiresIn * 1000;
+    const check = () => {
+      const remaining = expiresAt - Date.now();
+      if (remaining <= 0) expire();
+      else expiryTimer = setTimeout(check, Math.min(remaining, 2_147_483_647));
+    };
+    check();
   }
   async function resources(
     incidentId: string | undefined,
@@ -314,126 +336,156 @@ export function createScreenBridge(
     if (!applied && !disposed && state.incId === id) host.refresh();
   }
   async function login() {
-    if (loading) return;
+    if (loading || loggingOut || disposed) return;
+    const body: C.LoginRequest = {
+      login_id: input('login-id'),
+      // A password is opaque: leading/trailing whitespace is significant.
+      password: (document.getElementById('login-pw') as HTMLInputElement).value,
+      role: roleToApi(input('login-role')),
+    };
+    if (!body.login_id || !body.password) {
+      host.loginError(
+        !body.login_id ? '아이디를 입력하십시오.' : '비밀번호를 입력하십시오.',
+      );
+      return;
+    }
     loading = true;
+    const loginEpoch = generation;
+    host.loginBusy(true);
     host.loginError('');
-    await task(async (signal, epoch) => {
-      try {
-        const result = await source.api.auth.login({
-          body: {
-            login_id: input('login-id'),
-            password: input('login-pw'),
-            role: roleToApi(input('login-role')),
-          },
-          signal,
-        });
-        const user = await source.api.auth.me({ signal });
-        if (!alive(epoch)) return;
-        if (
-          user.id !== result.user.id ||
-          user.role !== roleToApi(input('login-role'))
-        )
-          throw new Error('로그인 계정의 권한이 선택한 역할과 다릅니다.');
-        currentUser = user;
-        if (user.role === 'ADMIN') {
-          const [users] = await Promise.all([
-            source.users(signal),
-            resources(undefined, signal, epoch),
-          ]);
-          if (!alive(epoch)) return;
-          S.accounts = users.map(accountView);
-          host.enter(accountView(user));
-          bindAdmin();
-          return;
-        }
-        const list = await source.listIncidents(signal);
-        if (!alive(epoch)) return;
-        S.incidents = list.map((row) =>
-          incidentView(
-            {
-              id: row.id,
-              name: row.name,
-              address: NULL_TEXT,
-              status: row.status,
-              ignition_point: { type: 'Point', coordinates: origin },
-              started_at: null,
-              reported_at: row.reported_at,
-              report_text: null,
-              reporter_org: null,
-              reporter_name: null,
-              reporter_phone: null,
-              reported_by: NULL_TEXT,
-              admin_area_id: row.admin_area_id,
-              current_stage: row.current_stage,
-              situation: {},
-              created_at: row.reported_at,
-              ended_at: null,
-              ended_by: null,
-              current_perimeter_id: '',
-              current_perimeter_version: row.current_perimeter_version,
-              latest_prediction_id: null,
-              latest_proposal_id: null,
-              needs_reprediction: row.needs_reprediction,
-              proposal_stale: row.proposal_stale,
-              situation_revision: '',
-              running_operation_id: null,
-            },
-            [],
-          ),
-        );
-        state.inc = {};
-        state.events = [];
-        state.incId =
-          list.find((i) => i.status === 'IN_PROGRESS')?.id ??
-          list[0]?.id ??
-          '__NULL__';
-        if (list.length) {
-          const data = await source.loadIncident(
-            state.incId,
-            user.role,
-            signal,
-          );
-          if (!alive(epoch)) return;
-          install(data);
-          currentWeather = data.now.status === 'ready' ? data.now.data : null;
-          if (data.prediction.status === 'ready')
-            host.baseAt(data.prediction.data.base_at);
-        } else S.incidents = [emptyIncident(origin)];
-        host.enter(accountView(user));
-        if (!list.length && user.role === 'REPORTER') host.reportForm(null);
-        if (list.length) {
-          await Promise.all([
-            resources(state.incId, signal, epoch),
-            histories(state.incId, signal, epoch),
-          ]);
-          if (!alive(epoch)) return;
-          host.refresh();
-        }
-      } catch (cause) {
-        if (alive(epoch) && !signal.aborted) {
-          source.client.clearSession();
-          currentUser = null;
-          host.loginError(error(cause));
-        }
-        throw cause;
-      }
-    });
-    loading = false;
-  }
-  async function logout() {
-    const token = source.client.getAccessToken();
-    reset();
-    // Clear local identity even if remote revocation fails; no demo token resume.
-    if (token)
-      await task(async (signal) => {
+    try {
+      await task(async (signal, epoch) => {
         try {
-          await source.api.auth.logout({ signal });
-        } finally {
-          source.client.clearSession();
+          const result = await source.api.auth.login({
+            body,
+            signal,
+          });
+          if (!alive(epoch)) return;
+          scheduleExpiry(result.expires_in);
+          const user = await source.api.auth.me({ signal });
+          if (!alive(epoch)) return;
+          if (
+            user.id !== result.user.id ||
+            user.role !== result.user.role ||
+            user.role !== body.role
+          )
+            throw new Error('로그인 계정의 권한이 선택한 역할과 다릅니다.');
+          currentUser = user;
+          if (user.role === 'ADMIN') {
+            const [users] = await Promise.all([
+              source.users(signal),
+              resources(undefined, signal, epoch),
+            ]);
+            if (!alive(epoch)) return;
+            S.accounts = users.map(accountView);
+            host.enter(accountView(user));
+            bindAdmin();
+            return;
+          }
+          const list = await source.listIncidents(signal);
+          if (!alive(epoch)) return;
+          S.incidents = list.map((row) =>
+            incidentView(
+              {
+                id: row.id,
+                name: row.name,
+                address: NULL_TEXT,
+                status: row.status,
+                ignition_point: { type: 'Point', coordinates: origin },
+                started_at: null,
+                reported_at: row.reported_at,
+                report_text: null,
+                reporter_org: null,
+                reporter_name: null,
+                reporter_phone: null,
+                reported_by: NULL_TEXT,
+                admin_area_id: row.admin_area_id,
+                current_stage: row.current_stage,
+                situation: {},
+                created_at: row.reported_at,
+                ended_at: null,
+                ended_by: null,
+                current_perimeter_id: '',
+                current_perimeter_version: row.current_perimeter_version,
+                latest_prediction_id: null,
+                latest_proposal_id: null,
+                needs_reprediction: row.needs_reprediction,
+                proposal_stale: row.proposal_stale,
+                situation_revision: '',
+                running_operation_id: null,
+              },
+              [],
+            ),
+          );
+          state.inc = {};
+          state.events = [];
+          state.incId =
+            list.find((i) => i.status === 'IN_PROGRESS')?.id ??
+            list[0]?.id ??
+            '__NULL__';
+          if (list.length) {
+            const data = await source.loadIncident(
+              state.incId,
+              user.role,
+              signal,
+            );
+            if (!alive(epoch)) return;
+            install(data);
+            currentWeather = data.now.status === 'ready' ? data.now.data : null;
+            if (data.prediction.status === 'ready')
+              host.baseAt(data.prediction.data.base_at);
+          } else S.incidents = [emptyIncident(origin)];
+          host.enter(accountView(user));
+          if (!list.length && user.role === 'REPORTER') host.reportForm(null);
+          if (list.length) {
+            await Promise.all([
+              resources(state.incId, signal, epoch),
+              histories(state.incId, signal, epoch),
+            ]);
+            if (!alive(epoch)) return;
+            host.refresh();
+          }
+        } catch (cause) {
+          if (alive(epoch) && !signal.aborted) {
+            source.client.clearSession();
+            clearTimeout(expiryTimer);
+            expiryTimer = undefined;
+            const authenticated = currentUser !== null;
+            currentUser = null;
+            host.loginError(
+              authenticated
+                ? `인증은 확인했지만 초기 데이터를 불러오지 못했습니다. ${error(cause)}`
+                : error(cause),
+            );
+          }
         }
       });
+    } finally {
+      if (alive(loginEpoch)) {
+        loading = false;
+        host.loginBusy(false);
+      }
+    }
+  }
+  async function logout() {
+    if (loggingOut || disposed) return;
+    loggingOut = true;
+    const token = source.client.getAccessToken();
+    reset();
+    // Capture the current Bearer header, then leave locally even if logging fails.
+    const pending = token ? source.api.auth.logout() : Promise.resolve();
     source.client.clearSession();
     host.leave();
+    host.loginBusy(true);
+    try {
+      await pending;
+    } catch (cause) {
+      if (!disposed)
+        host.notice(`로그아웃 기록을 전송하지 못했습니다. ${error(cause)}`);
+    } finally {
+      loggingOut = false;
+      if (!disposed) host.loginBusy(false);
+    }
   }
   async function predict() {
     const incident = raw.get(state.incId);
@@ -903,6 +955,7 @@ export function createScreenBridge(
   return {
     login,
     logout,
+    expire,
     select,
     predict,
     end,

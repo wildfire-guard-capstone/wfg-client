@@ -5005,7 +5005,7 @@ export function createMockRuntime() {
         {
           mock,
           onUnauthorized: () => {
-            if (state.role) void dataBridge?.logout();
+            dataBridge?.expire('인증 정보 만료 또는 무효');
           },
         },
       ),
@@ -5018,7 +5018,11 @@ export function createMockRuntime() {
         IS,
         refresh: refreshApiDisplay,
         enter: enterSession,
-        leave: () => logout('API 세션 종료'),
+        leave: (reason) => {
+          logout(reason || 'API 세션 종료');
+          state.user = null;
+          state.loginAt = null;
+        },
         selected: (id, fly = true) => {
           suppressSelectionLoad = true;
           try {
@@ -5032,6 +5036,11 @@ export function createMockRuntime() {
         notice: failNotice,
         loginError: (message) => {
           $('#login-err').textContent = message;
+        },
+        loginBusy: (busy) => {
+          $('#login-btn').disabled = busy;
+          if (busy) $('#login-btn').setAttribute('aria-busy', 'true');
+          else $('#login-btn').removeAttribute('aria-busy');
         },
         baseAt: (at) => {
           T0.setTime(Date.parse(at));
