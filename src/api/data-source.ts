@@ -1,5 +1,6 @@
 import type { ApiClient } from './client.ts';
-import type { Incident, Id, Operation, Page, UserRole } from './contracts.ts';
+import type { Incident, Id, Operation, Page, UserRole, MapFeatures, AdminArea } from './contracts.ts';
+import type { RequestFor } from './endpoints.ts';
 import { createIdempotencyKey } from './client.ts';
 import { createApiServices } from './services.ts';
 import { waitForOperation } from './operations.ts';
@@ -220,6 +221,36 @@ export function createApiDataSource(client: ApiClient) {
     predict,
     listIncidents,
     incidentDirectory,
+    adminAreas: (query: RequestFor<'MAP-04'>['query'] = {}, signal?: AbortSignal) =>
+      allPages((cursor) => api.map.adminAreas({ query: { ...query, cursor, limit: 100 }, signal })),
+    async mapWindow(bbox: string, signal?: AbortSignal) {
+      const [layers, areas] = await Promise.all([
+        api.map.layers({ signal }),
+        remote(() => allPages((cursor) => api.map.adminAreas({ query: { cursor, limit: 100 }, signal }))),
+      ]);
+      const collections = new Map<string, Remote<Pick<MapFeatures, 'type' | 'features'>>>();
+      let index = 0;
+      await Promise.all(Array.from({ length: Math.min(4, layers.length) }, async () => {
+        for (;;) {
+          signal?.throwIfAborted();
+          const layer = layers[index++];
+          if (!layer) break;
+          if (!layer.available) {
+            collections.set(layer.id, { status: 'error', error: new Error(`[필요한 정보: ${layer.name} 레이어 적재 데이터]`) });
+            continue;
+          }
+          collections.set(layer.id, await remote(async () => {
+            const features = await allPages(async (cursor) => {
+              const value = await api.map.features({ path: { layer_id: layer.id }, query: { bbox, cursor, limit: 1000 }, signal });
+              return { items: value.features, next_cursor: value.next_cursor, has_more: value.has_more };
+            });
+            return { type: 'FeatureCollection' as const, features };
+          }));
+        }
+      }));
+      signal?.throwIfAborted();
+      return { layers, areas, collections };
+    },
     proposalVersions: (incidentId: Id, signal?: AbortSignal) =>
       allPages((cursor) =>
         api.proposals.list({

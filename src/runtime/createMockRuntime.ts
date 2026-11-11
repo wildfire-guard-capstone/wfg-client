@@ -9,7 +9,8 @@ import type {
   MultiLineString,
 } from 'geojson';
 import { createApiClientFromEnv } from '../api/environment';
-import { createApiDataSource } from '../api/data-source';
+import { createApiDataSource, type ApiDataSource } from '../api/data-source';
+import { mapRenderData, type MapWindow, type MapMarker } from '../api/screen/maps';
 import { createScreenBridge, type ScreenBridge } from '../api/screen/bridge';
 import { screenMockOptions } from '../api/screen/mock-seed';
 import {
@@ -25,8 +26,8 @@ import { calculateRisk } from '../models/risk';
 import { createGeometry } from '../models/geometry';
 import * as maplibregl from 'maplibre-gl';
 import { createScenario } from '../data/scenario';
-import { BOUNDARIES } from '../data/boundaries';
-import { OSM_LINES } from '../data/osmLines';
+import { BOUNDARIES as STATIC_BOUNDARIES } from '../data/boundaries';
+import { OSM_LINES as STATIC_OSM_LINES } from '../data/osmLines';
 import { WATER_SOURCES } from '../data/waterSources';
 import { query, queryAll } from './dom';
 import { createLifecycle } from './lifecycle';
@@ -53,6 +54,19 @@ export function createMockRuntime() {
   const lifecycle = createLifecycle();
   const S = createScenario();
   const apiMode = import.meta.env.VITE_API_MODE;
+  let BOUNDARIES: FeatureCollection = apiMode ? { type: 'FeatureCollection', features: [] } : STATIC_BOUNDARIES;
+  let OSM_LINES: FeatureCollection = apiMode ? { type: 'FeatureCollection', features: [] } : STATIC_OSM_LINES;
+  if (apiMode) {
+    S.villages = []; S.facilities = []; S.shelters = []; S.agencies = []; S.routes = [];
+    S.power_line_fallback = { name: '[필요한 정보: 송전선 도형]', coords: [] };
+  }
+  let mapSource: ApiDataSource | null = null;
+  let mapRequest: AbortController | null = null;
+  let mapQueryKey = '';
+  let mapTimer: number | undefined;
+  let entityRequest: AbortController | null = null;
+  let currentMapData: MapWindow | null = null;
+  let mapBound = false;
   let dataBridge: ScreenBridge | null = null;
   let suppressSelectionLoad = false;
   const $ = query;
@@ -1072,7 +1086,7 @@ export function createMockRuntime() {
     pick: '#ff6a00',
   };
   const AG_ICON = { fire: 'fire', police: 'police', gov: 'gov', kepco: 'bolt' };
-  const WATER = (WATER_SOURCES || []).map((w, i) => ({
+  const WATER = (apiMode ? [] : WATER_SOURCES || []).map((w, i) => ({
     ...w,
     id: `w${i}`,
   }));
@@ -1614,6 +1628,92 @@ export function createMockRuntime() {
       .setLngLat(lngLat)
       .setHTML(`<div class="map-popup">${html}</div>`)
       .addTo(map);
+  function clearApiMap() {
+    mapRequest?.abort(); entityRequest?.abort();
+    window.clearTimeout(mapTimer);
+    mapQueryKey = '';
+    currentMapData = null;
+    if (!apiMode) return;
+    S.villages = []; S.facilities = []; S.shelters = []; S.agencies = []; S.routes = [];
+    BOUNDARIES = OSM_LINES = { type: 'FeatureCollection', features: [] };
+    if (map?.getSource('admin')) applyApiMap({ layers: [], collections: new Map(), areas: { status: 'ready', data: [] } });
+  }
+  async function openApiEntity(marker: MapMarker) {
+    if (!mapSource) return;
+    entityRequest?.abort();
+    const controller = entityRequest = new AbortController();
+    try {
+      const result = await mapSource.api.map.entity({ path: { entity_type: marker.entity, entity_id: marker.id }, signal: controller.signal });
+      if (controller.signal.aborted) return;
+      if (result.entity_type !== marker.entity || result.entity.id !== marker.id) throw new Error('[필요한 정보: 선택한 지도 대상과 일치하는 상세 응답]');
+      popup(marker.position, `<b>${esc(result.entity.name || '[필요한 정보: 지도 대상명]')}</b> <span style="color:#666">${esc(marker.kind)}</span>`);
+    } catch (error) {
+      if (!controller.signal.aborted) failNotice(`지도 상세 조회 실패${error.status ? ` (HTTP ${error.status})` : ''}: ${error.message}`);
+    }
+  }
+  function applyApiMap(snapshot: MapWindow) {
+    const view = mapRenderData(snapshot);
+    currentMapData = snapshot;
+    S.villages = view.villages; S.facilities = view.facilities; S.shelters = view.shelters; S.agencies = view.agencies;
+    BOUNDARIES = view.boundaries; OSM_LINES = view.roads;
+    for (const [key, marker] of Object.entries(state.markers))
+      if (/^[vfsaw]:/.test(key)) { marker.remove(); delete state.markers[key]; }
+    for (const marker of view.markers)
+      mkMarker(marker.key, markerEl(marker.cls, marker.icon, marker.name, marker.kind), marker.position, () => void openApiEntity(marker));
+    for (const [id, data] of [['admin', view.boundaries], ['osm-lines', view.roads], ['power', view.power], ['houses', view.houses], ['routes', EMPTY]] as const)
+      (map.getSource(id) as maplibregl.GeoJSONSource | undefined)?.setData(data);
+    applyLayerVisibility();
+    updateFireLayers();
+    syncApiValues();
+  }
+  async function refreshApiMap() {
+    if (!mapSource || !map?.getSource('admin') || !state.role || state.role === 'admin' || dataBridge?.pendingIncident()) return;
+    const bounds = map.getBounds();
+    const bbox = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()].map((n) => Number(n.toFixed(6))).join(',');
+    const incidentId = state.incId, key = `${incidentId}:${bbox}`;
+    if (key === mapQueryKey) return;
+    mapQueryKey = key;
+    mapRequest?.abort(); entityRequest?.abort();
+    const controller = mapRequest = new AbortController();
+    try {
+      const snapshot = await mapSource.mapWindow(bbox, controller.signal);
+      if (controller.signal.aborted || state.incId !== incidentId || !state.role) return;
+      applyApiMap(snapshot);
+      for (const [id, result] of snapshot.collections)
+        if (result.status === 'error') dataBridge?.errors.set(`map.${id}`, result.error);
+      const failures = [...snapshot.collections].filter(([, result]) => result.status === 'error');
+      if (failures.length || snapshot.areas.status === 'error') {
+        const cause = failures[0]?.[1];
+        const error = cause?.status === 'error' ? cause.error as Error & { status?: number } : snapshot.areas.status === 'error' ? snapshot.areas.error as Error & { status?: number } : null;
+        failNotice(`지도 일부 조회 실패${error?.status ? ` (HTTP ${error.status})` : ''}: ${error?.message || '[필요한 정보: 지도 레이어 응답]'}`);
+        mapQueryKey = '';
+      }
+    } catch (error) {
+      if (!controller.signal.aborted && state.role) {
+        mapQueryKey = '';
+        failNotice(`지도 조회 실패${error.status ? ` (HTTP ${error.status})` : ''}: ${error.message}`);
+      }
+    }
+  }
+  function scheduleApiMap() {
+    if (!apiMode) return;
+    window.clearTimeout(mapTimer);
+    mapTimer = lifecycle.setTimeout(() => void refreshApiMap(), 180);
+  }
+  function bindApiMap() {
+    if (!mapBound) {
+      mapBound = true;
+      map.on('moveend', scheduleApiMap);
+      for (const id of ['roads', 'power', 'houses', 'admin-sig'])
+        map.on('click', id, (event) => {
+          if (state.rep.pickMode || state.rep.drawMode) return;
+          const p = event.features?.[0]?.properties;
+          if (p?.api_entity_id && p.api_entity_type)
+            void openApiEntity({ key: '', id: String(p.api_entity_id), entity: p.api_entity_type, name: p.name, kind: p.name || '[필요한 정보: 지도 대상명]', cls: '', icon: '', position: [event.lngLat.lng, event.lngLat.lat] });
+        });
+    }
+    scheduleApiMap();
+  }
   // 두 폴리곤의 겹친 부분(Sutherland–Hodgman, 자르는 쪽은 볼록에 가깝다고 본다)
   function clipRing(subject, clip) {
     const open = (r) =>
@@ -4811,6 +4911,9 @@ export function createMockRuntime() {
     }
   }
   function refreshApiDisplay() {
+    if (dataBridge?.pendingIncident()) {
+      mapRequest?.abort(); entityRequest?.abort(); mapQueryKey = '';
+    }
     if (state.markers.f0) state.markers.f0.setLngLat(inc().ignition);
     renderAll();
     setT(IS().t);
@@ -5053,8 +5156,13 @@ export function createMockRuntime() {
         state,
         IS,
         refresh: refreshApiDisplay,
-        enter: enterSession,
+        enter: (account) => {
+          enterSession(account);
+          if (map.loaded()) bindApiMap();
+          else map.once('load', bindApiMap);
+        },
         leave: (reason) => {
+          clearApiMap();
           logout(reason || 'API 세션 종료');
           state.user = null;
           state.loginAt = null;
@@ -5066,6 +5174,7 @@ export function createMockRuntime() {
           } finally {
             suppressSelectionLoad = false;
           }
+          scheduleApiMap();
         },
         reportForm: loadRepForm,
         admin: renderAdmin,
@@ -5105,6 +5214,7 @@ export function createMockRuntime() {
       },
       { accountAdminAreaId: import.meta.env.VITE_ACCOUNT_ADMIN_AREA_ID },
     );
+    mapSource = source;
   }
   window.__mock = api;
   if (!dataBridge) resumeSession();
@@ -5152,6 +5262,7 @@ export function createMockRuntime() {
     toggleLayer(button: HTMLElement) {
       button.classList.toggle('off');
       applyLayerVisibility();
+      scheduleApiMap();
     },
     showTab,
     goToFire() {
@@ -5269,6 +5380,7 @@ export function createMockRuntime() {
     ...api,
     actions,
     dispose() {
+      mapRequest?.abort(); entityRequest?.abort();
       dataBridge?.dispose();
       lifecycle.dispose();
       headerResizeObserver.disconnect();
