@@ -134,6 +134,10 @@ export interface ApiContracts {
   'LOG-01': Contract<Read<never, LogQuery>, C.Page<C.EventLog>>;
   'USR-01': Contract<Read<never, UserQuery>, C.Page<C.AdminUser>>;
   'USR-02': Contract<{ body: C.UserCreateRequest }, C.UserCreated>;
+  'USR-03': Contract<Write<{ user_id: C.Id }, C.UserUpdateRequest>, C.AdminUser>;
+  'USR-04': Contract<Read<{ user_id: C.Id }>, undefined>;
+  'USR-05': Contract<Read<{ user_id: C.Id }>, C.UserPasswordReset>;
+  'USR-06': Contract<Read<{ user_id: C.Id }>, C.AdminUser>;
 }
 export type ApiId = keyof ApiContracts;
 export type RequestFor<K extends ApiId> = ApiContracts[K]['request'];
@@ -436,6 +440,10 @@ export const endpoints = {
     priority: 'P2',
     body: true,
   },
+  'USR-03': { method: 'PATCH', path: '/admin/users/{user_id}', status: 200, roles: ['ADMIN'], priority: 'P3', body: true },
+  'USR-04': { method: 'DELETE', path: '/admin/users/{user_id}', status: 204, roles: ['ADMIN'], priority: 'P3' },
+  'USR-05': { method: 'POST', path: '/admin/users/{user_id}/password-reset', status: 200, roles: ['ADMIN'], priority: 'P3' },
+  'USR-06': { method: 'POST', path: '/admin/users/{user_id}/unlock', status: 200, roles: ['ADMIN'], priority: 'P3' },
 } as const satisfies Record<ApiId, Endpoint>;
 
 export const API_IDS = Object.keys(endpoints) as ApiId[];

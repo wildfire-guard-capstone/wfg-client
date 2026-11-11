@@ -36,8 +36,11 @@ function checkContracts(client: ApiClient, response: AssistantResponse) {
   });
   // @ts-expect-error IDs remain strings, including BIGINT IDs.
   client.request('INC-03', { path: { incident_id: 100 } });
-  // @ts-expect-error Unconfirmed endpoint is absent.
+  // @ts-expect-error Confirmed user update still requires path and body.
   client.request('USR-03');
+  client.request('USR-03', { path: { user_id: '3' }, body: { role: 'ADMIN', admin_area_id: null } });
+  // @ts-expect-error Password reset is bodyless.
+  client.request('USR-05', { path: { user_id: '3' }, body: {} });
   // @ts-expect-error Retired endpoint is absent.
   const retired: ApiId = 'EVD-01';
   // @ts-expect-error Proposal layout has exactly S1..S6/E1..E6 codes.

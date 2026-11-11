@@ -52,7 +52,7 @@ export interface ScreenHost {
   preview: (preview: C.CorrectionPreview, confirm: () => void) => void;
   modal: (title: string, body: string, actions: ModalAction[]) => void;
   diff: (before: ProposalRun, after: ProposalRun) => void;
-  issued: (account: Account, password: string) => void;
+  issued: (account: Account, password: string, title?: string) => void;
   proposalSelected?: () => void;
 }
 const input = (id: string) =>
@@ -79,6 +79,9 @@ export function createScreenBridge(
   const snapshot = new Map<string, IncidentData>();
   const versions = new Map<string, C.ProposalVersion[]>();
   const predictionOperations = new Map<string, C.Operation>();
+  const rawUsers = new Map<string, C.AdminUser>();
+  const userChanges = new Set<string>();
+  let userTicket = 0;
   const rawResources = new Map<string, C.Resource>();
   const resourceBases = new Map<string, C.ResourceBase>();
   const resourceChanges = new Set<string>();
@@ -101,8 +104,7 @@ export function createScreenBridge(
     loading = false,
     loggingOut = false,
     chatting = false,
-    saving = false,
-    issuing = false;
+    saving = false;
   let expiryTimer: ReturnType<typeof setTimeout> | undefined;
   const confirming = new Set<string>();
   const savedConfirmations = new Set<string>();
@@ -132,6 +134,9 @@ export function createScreenBridge(
   }
   function reset() {
     generation++;
+    userTicket++;
+    rawUsers.clear();
+    userChanges.clear();
     selection++;
     proposalTicket++;
     chatTicket++;
@@ -185,6 +190,83 @@ export function createScreenBridge(
       else expiryTimer = setTimeout(check, Math.min(remaining, 2_147_483_647));
     };
     check();
+  }
+  async function accounts(signal: AbortSignal, epoch: number) {
+    const ticket = ++userTicket;
+    const rows = await source.users(signal);
+    if (!alive(epoch) || signal.aborted || ticket !== userTicket) return;
+    rawUsers.clear();
+    for (const row of rows) rawUsers.set(row.login_id, row);
+    S.accounts = rows.map(accountView);
+  }
+  function keepCommander(user: C.AdminUser) {
+    if (user.role === 'COMMANDER' && [...rawUsers.values()].filter(u => u.role === 'COMMANDER' && u.admin_area_id === user.admin_area_id && !u.deleted_at).length === 1)
+      throw new Error('이 관할의 마지막 통합지휘권자입니다. 먼저 다른 계정을 지정해주세요.');
+  }
+  async function changeUser(change:
+    | { action: 'create'; body: C.UserCreateRequest }
+    | { action: 'update'; loginId: string; body: C.UserUpdateRequest }
+    | { action: 'revoke' | 'resetPassword' | 'unlock'; loginId: string }
+  ) {
+    if (currentUser?.role !== 'ADMIN' || state.role !== 'admin') {
+      host.notice('관리자만 계정을 변경할 수 있습니다.');
+      return;
+    }
+    const key = change.action === 'create' ? 'create' : change.loginId;
+    if (userChanges.has(key)) return;
+    const epoch = generation;
+    userChanges.add(key);
+    userTicket++;
+    try {
+      return await task(async (signal, epoch) => {
+        let result: C.AdminUser | C.UserCreated | C.UserPasswordReset | undefined;
+        let oneTime: { account: Account; password: string; title: string } | undefined;
+        if (change.action === 'create') {
+          const created = await source.api.users.create({ body: change.body, signal });
+          result = created;
+          oneTime = { account: accountView(created.user), password: created.temporary_password, title: '계정 발급 완료' };
+        } else {
+          const target = rawUsers.get(change.loginId);
+          if (!target) throw new Error('계정 목록을 다시 조회해주세요.');
+          if (change.action !== 'revoke' && target.deleted_at) throw new Error('회수된 계정은 변경·재발급·잠금 해제할 수 없습니다.');
+          const path = { user_id: target.id };
+          if (change.action === 'update') {
+            if (change.body.role && change.body.role !== target.role && target.id === currentUser?.id)
+              throw new Error('자기 계정의 역할을 바꿀 수 없습니다.');
+            if ((change.body.role && change.body.role !== target.role) || ('admin_area_id' in change.body && change.body.admin_area_id !== target.admin_area_id)) keepCommander(target);
+            result = await source.api.users.update({ path, body: change.body, signal });
+          } else if (change.action === 'revoke') {
+            if (target.id === currentUser?.id) throw new Error('자기 계정은 회수할 수 없습니다.');
+            if (!target.deleted_at) keepCommander(target);
+            await source.api.users.revoke({ path, signal });
+          } else if (change.action === 'unlock') result = await source.api.users.unlock({ path, signal });
+          else {
+            const reset = await source.api.users.resetPassword({ path, signal });
+            if (reset.user_id !== target.id) throw new Error('[필요한 정보: 선택 계정의 비밀번호 재발급 응답 user_id]');
+            result = reset;
+            oneTime = { account: accountView(target), password: reset.temporary_password, title: '초기 비밀번호 재발급' };
+          }
+        }
+        if (!alive(epoch) || signal.aborted) return;
+        // Store only public user fields; temporary passwords are passed straight to the existing modal.
+        const user = result && ('user' in result ? result.user : 'login_id' in result ? result : undefined);
+        if (user) {
+          rawUsers.set(user.login_id, user);
+          S.accounts = [...rawUsers.values()].map(accountView);
+        }
+        const refreshed = await remote(() => accounts(signal, epoch));
+        if (!alive(epoch) || signal.aborted) return;
+        if (refreshed.status === 'error') host.notice(`계정 변경은 저장됐지만 목록 재조회에 실패했습니다: ${error(refreshed.error)}`);
+        host.admin();
+        if (oneTime) host.issued(oneTime.account, oneTime.password, oneTime.title);
+        return result;
+      });
+    } finally {
+      if (alive(epoch)) {
+        userChanges.delete(key);
+        host.admin();
+      }
+    }
   }
   async function resources(
     incidentId: string | undefined,
@@ -546,12 +628,11 @@ export function createScreenBridge(
             throw new Error('로그인 계정의 권한이 선택한 역할과 다릅니다.');
           currentUser = user;
           if (user.role === 'ADMIN') {
-            const [users] = await Promise.all([
-              source.users(signal),
+            await Promise.all([
+              accounts(signal, epoch),
               resources(undefined, signal, epoch),
             ]);
             if (!alive(epoch)) return;
-            S.accounts = users.map(accountView);
             host.enter(accountView(user));
             bindAdmin();
             return;
@@ -1074,22 +1155,34 @@ export function createScreenBridge(
   }
   function bindAdmin() {
     if (state.role !== 'admin') return;
-    const pending = (label: string) => {
-      host.notice(`${NULL_TEXT} ${label}: 검토 중인 API 명세 대기 중`);
-      host.admin();
+    const confirmUser = (title: string, body: string, label: string, action: () => void) =>
+      host.modal(title, `<p>${body}</p>`, [
+        { label: '취소', onClick: () => host.admin() },
+        { label, cls: 'primary', onClick: action },
+      ]);
+    for (const el of document.querySelectorAll<HTMLSelectElement>('[data-role]')) el.onchange = () => {
+      const loginId = el.dataset.role!, target = rawUsers.get(loginId);
+      if (!target) { host.notice('계정 목록을 다시 조회해주세요.'); host.admin(); return; }
+      const role = roleToApi(el.value);
+      confirmUser('권한 변경 확인', `<b>${escaped(loginId)}</b>의 선택한 권한을 서버에 저장합니다. 저장하면 다음 요청부터 적용됩니다.`, '변경', () => {
+        return changeUser({ action: 'update', loginId, body: { role } });
+      });
     };
-    for (const selector of [
-      '[data-role]',
-      '[data-revoke]',
-      '[data-reissue]',
-      '[data-unlock]',
-      '[data-del]',
-    ])
-      for (const el of document.querySelectorAll<HTMLElement>(selector)) {
-        if (el.tagName === 'SELECT')
-          el.onchange = () => pending('계정 정보·권한 변경');
-        else el.onclick = () => pending('계정·자원 관리');
-      }
+    for (const el of document.querySelectorAll<HTMLButtonElement>('[data-revoke]')) el.onclick = () => {
+      const loginId = el.dataset.revoke!;
+      confirmUser('계정 회수 확인', `<b>${escaped(loginId)}</b> 계정을 회수합니다. 회수한 계정은 로그인할 수 없습니다.`, '회수', () => {
+        return changeUser({ action: 'revoke', loginId });
+      });
+    };
+    for (const [selector, action] of [['[data-reissue]', 'resetPassword'], ['[data-unlock]', 'unlock']] as const)
+      for (const el of document.querySelectorAll<HTMLButtonElement>(selector)) el.onclick = () => {
+        const loginId = (action === 'resetPassword' ? el.dataset.reissue : el.dataset.unlock)!;
+        el.disabled = true;
+        void changeUser({ action, loginId }).finally(() => { el.disabled = false; });
+      };
+    for (const el of document.querySelectorAll<HTMLButtonElement>('[data-del]')) el.onclick = () => {
+      host.notice('[필요한 정보: 계정 영구 삭제 API 계약 — USR-04는 계정 회수만 지원]');
+    };
     const readForm = (id?: string) => {
       const value = (field: string) => id
         ? (document.querySelector<HTMLInputElement>(`[data-r${field}="${id}"]`)?.value ?? '').trim()
@@ -1118,50 +1211,24 @@ export function createScreenBridge(
     const add = document.getElementById('ac-add');
     if (add)
       add.onclick = () => {
-        if (issuing) return;
-        issuing = true;
-        void task(async (signal, epoch) => {
-          const role = roleToApi(input('ac-role'));
-          if (
-            !['COMMANDER', 'VIEWER', 'REPORTER'].includes(role) ||
-            !input('ac-name') ||
-            !input('ac-org')
-          )
-            throw new Error('이름·소속·권한을 입력해주세요.');
-          if (!options.accountAdminAreaId) {
-            host.notice(
-              `${NULL_TEXT} 계정 발급은 확정됐지만 관할 admin_area_id 제공 방식 확인 대기 중입니다.`,
-            );
-            return;
-          }
-          const prefix = { COMMANDER: 'cmd', VIEWER: 'view', REPORTER: 'rep' }[
-            role as 'COMMANDER'
-          ];
-          let n = 1;
-          while (
-            S.accounts.some(
-              (a) => a.id === `${prefix}${String(n).padStart(2, '0')}`,
-            )
-          )
-            n++;
-          const result = await source.api.users.create({
-            body: {
-              login_id: `${prefix}${String(n).padStart(2, '0')}`,
-              name: input('ac-name'),
-              organization: input('ac-org'),
-              role,
-              admin_area_id: options.accountAdminAreaId,
-            },
-            signal,
-          });
-          const users = await source.users(signal);
-          if (!alive(epoch)) return;
-          S.accounts = users.map(accountView);
-          host.admin();
-          host.issued(accountView(result.user), result.temporary_password);
-        }).finally(() => {
-          issuing = false;
-        });
+        const role = roleToApi(input('ac-role'));
+        if (!['COMMANDER', 'VIEWER', 'REPORTER'].includes(role) || !input('ac-name') || !input('ac-org')) {
+          host.notice('이름·소속·권한을 입력해주세요.');
+          return;
+        }
+        if (!options.accountAdminAreaId) {
+          host.notice('[필요한 정보: 계정 발급 관할 시군구 admin_area_id 설정]');
+          return;
+        }
+        const prefix = { COMMANDER: 'cmd', VIEWER: 'view', REPORTER: 'rep' }[role as 'COMMANDER'];
+        let n = 1;
+        while (S.accounts.some(a => a.id.toLowerCase() === `${prefix}${String(n).padStart(2, '0')}`)) n++;
+        add.setAttribute('disabled', '');
+        void changeUser({ action: 'create', body: {
+          login_id: `${prefix}${String(n).padStart(2, '0')}`,
+          name: input('ac-name'), organization: input('ac-org'), role,
+          admin_area_id: options.accountAdminAreaId,
+        } }).finally(() => { add.removeAttribute('disabled'); });
       };
   }
   return {
@@ -1179,6 +1246,7 @@ export function createScreenBridge(
     bindAdmin,
     changeResource,
     changeBase,
+    changeUser,
     counts: () => counts,
     incidentRows: () =>
       [...incidentSummaries.values()].map((row) =>

@@ -5233,8 +5233,8 @@ export function createMockRuntime() {
         preview: apiCorrectionPreview,
         modal: openModal,
         diff: showDiff,
-        issued: (account, password) =>
-          showIssued('계정 발급 완료', account, password),
+        issued: (account, password, title = '계정 발급 완료') =>
+          showIssued(title, account, password),
         proposalSelected: () => {
           showTab('proposal');
           $('#ipt-proposal').closest('.sp-body').scrollTop = 0;

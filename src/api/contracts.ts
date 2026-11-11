@@ -92,6 +92,11 @@ export interface UserCreateRequest {
   role: UserRole;
   admin_area_id: Id | null;
 }
+export type UserUpdateRequest = Partial<Pick<UserCreateRequest, 'name' | 'organization' | 'role' | 'admin_area_id'>>;
+export interface UserPasswordReset {
+  user_id: Id;
+  temporary_password: string;
+}
 export interface UserCreated {
   user: AdminUser;
   temporary_password: string;

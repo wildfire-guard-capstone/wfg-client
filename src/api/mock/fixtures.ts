@@ -582,6 +582,10 @@ export function createFixtures(): ResponseMap {
       },
     ]),
     'USR-01': page(adminUsers),
+    'USR-03': adminUsers[0]!,
+    'USR-04': undefined,
+    'USR-05': { user_id: adminUsers[0]!.id, temporary_password: 'mock-reset-password' },
+    'USR-06': { ...adminUsers[0]!, failed_login_count: 0 },
     'USR-02': {
       user: adminUsers[2]!,
       temporary_password: 'mock-temporary-password',

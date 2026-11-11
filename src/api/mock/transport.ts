@@ -235,6 +235,22 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
       .get(incident.id)
       ?.find((p) => p.id === incident.current_perimeter_id) ??
     fail(404, 'NOT_FOUND', '현재 화선이 없습니다.');
+  const accountOf = (id: string, active = true) => {
+    const u = users.find(u => u.id === id) ?? fail(404, 'NOT_FOUND', '계정을 찾지 못했습니다.');
+    if (active && u.deleted_at) fail(409, 'ACCOUNT_REVOKED', '회수된 계정입니다.');
+    return u;
+  };
+  const syncAccount = (u: C.AdminUser) => {
+    const account = accounts.get(u.login_id.toLowerCase());
+    if (account) account.user = u;
+  };
+  const keepCommander = (u: C.AdminUser) => {
+    if (u.role === 'COMMANDER' && !users.some(other => other.id !== u.id && other.role === 'COMMANDER' && other.admin_area_id === u.admin_area_id && !other.deleted_at)) fail(409, 'LAST_COMMANDER', '이 관할의 마지막 통합지휘권자입니다.');
+  };
+  const jurisdiction = (role: C.UserRole, area: unknown) => {
+    const known = new Set([...MOCK_ACCOUNTS.map(u => u.admin_area_id).filter(Boolean), ...fixture['MAP-04'].items.filter(a => a.level === 'SIGUNGU').map(a => a.id)]);
+    if (role === 'ADMIN' ? area !== null : typeof area !== 'string' || !known.has(area)) fail(422, 'INVALID_JURISDICTION', '전산 관리자는 관할 null, 다른 역할은 시군구를 골라야 합니다.');
+  };
   const startJob = (
     incident: C.Incident,
     kind: C.Operation['kind'],
@@ -446,7 +462,9 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
         params[key] = decodeURIComponent(match[i + 1]!);
       });
       const authorization = request.headers.get('Authorization') ?? '';
-      const user = tokens.get(authorization.replace(/^Bearer /, ''));
+      const sessionUser = tokens.get(authorization.replace(/^Bearer /, ''));
+      const user = sessionUser ? accounts.get(sessionUser.login_id.toLowerCase())?.user ?? sessionUser : undefined;
+      if (user && 'deleted_at' in user && user.deleted_at) fail(401, 'ACCOUNT_REVOKED', '회수된 계정입니다.');
       if (route.id !== 'AUTH-01') {
         if (!user)
           fail(401, 'INVALID_TOKEN', '목업 계정으로 먼저 로그인해주세요.');
@@ -488,6 +506,7 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
         'PROP-05': ['expected_prediction_id', 'situation_revision'],
         'AI-01': ['input_text', 'proposal_id', 'item_code'],
         'COR-01': ['confirmation_token'],
+        'USR-03': ['name','organization','role','admin_area_id'],
         'USR-02': ['login_id', 'name', 'organization', 'role', 'admin_area_id'],
       };
       for (const key of Object.keys(body))
@@ -590,6 +609,7 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
             );
           if (account.user.role !== role)
             fail(403, 'ROLE_MISMATCH', '계정 역할과 선택한 역할이 다릅니다.');
+          if ('deleted_at' in account.user && account.user.deleted_at) fail(401, 'ACCOUNT_REVOKED', '회수된 계정입니다.');
           const token = `mock-only-${role}-${next()}`;
           tokens.set(token, account.user);
           data = {
@@ -1302,6 +1322,53 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
             query,
           );
           break;
+        case 'USR-03': {
+          const target = accountOf(params.user_id!);
+          if (!Object.keys(body).length) invalid('body', '변경할 필드가 필요합니다.');
+          const changes: C.UserUpdateRequest = {};
+          for (const key of ['name', 'organization'] as const) if (key in body) {
+            const value = requiredString(body, key);
+            if (value.length > (key === 'name' ? 50 : 100)) invalid(key, '필드 길이를 확인해주세요.');
+            changes[key] = value;
+          }
+          if ('role' in body) {
+            const role = requiredString(body, 'role');
+            if (!MOCK_ACCOUNTS.some(u => u.role === role)) invalid('role', '권한을 확인해주세요.');
+            changes.role = role as C.UserRole;
+            if (role !== target.role && target.id === user!.id) fail(409, 'SELF_MODIFICATION', '자기 계정의 역할을 바꿀 수 없습니다.');
+          }
+          if ('admin_area_id' in body) changes.admin_area_id = body.admin_area_id as string | null;
+          const role = changes.role ?? target.role;
+          const area = 'admin_area_id' in changes ? changes.admin_area_id : target.admin_area_id;
+          if (role !== target.role || area !== target.admin_area_id) { jurisdiction(role, area); keepCommander(target); }
+          Object.assign(target, changes, { updated_at: MOCK_TIME });
+          syncAccount(target);
+          data = target;
+          break;
+        }
+        case 'USR-04': {
+          const target = accountOf(params.user_id!, false);
+          if (target.id === user!.id) fail(409, 'SELF_MODIFICATION', '자기 계정은 회수할 수 없습니다.');
+          if (!target.deleted_at) { keepCommander(target); target.deleted_at = MOCK_TIME; target.updated_at = MOCK_TIME; syncAccount(target); }
+          data = undefined;
+          break;
+        }
+        case 'USR-05': {
+          const target = accountOf(params.user_id!);
+          const temporary_password = `mock-reset-${next()}`;
+          const account = accounts.get(target.login_id.toLowerCase());
+          if (account) account.password = temporary_password;
+          data = { user_id: target.id, temporary_password } satisfies C.UserPasswordReset;
+          break;
+        }
+        case 'USR-06': {
+          const target = accountOf(params.user_id!);
+          target.failed_login_count = 0;
+          target.updated_at = MOCK_TIME;
+          syncAccount(target);
+          data = target;
+          break;
+        }
         case 'USR-02': {
           const loginId = requiredString(body, 'login_id'),
             role = requiredString(body, 'role');
@@ -1309,15 +1376,7 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
             invalid('role', '사용자 역할 코드가 올바르지 않습니다.');
           if (accounts.has(loginId.toLowerCase()))
             fail(409, 'DUPLICATE_LOGIN_ID', '이미 있는 목업 계정입니다.');
-          if (
-            role === 'ADMIN'
-              ? body.admin_area_id !== null
-              : typeof body.admin_area_id !== 'string'
-          )
-            invalid(
-              'admin_area_id',
-              'ADMIN은 null, 다른 역할은 시군구 ID가 필요합니다.',
-            );
+          jurisdiction(role as C.UserRole, body.admin_area_id);
           const created: C.AdminUser = {
             id: next(),
             login_id: loginId,
@@ -1330,6 +1389,7 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
             updated_at: MOCK_TIME,
             deleted_at: null,
           };
+          if (loginId.length > 50 || created.name.length > 50 || created.organization.length > 100) invalid('body', '계정 필드 길이를 확인해주세요.');
           users.push(created);
           accounts.set(loginId.toLowerCase(), {
             user: created,

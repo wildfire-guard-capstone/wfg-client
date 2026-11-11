@@ -53,6 +53,6 @@ export function createApiServices(client: ApiClient) {
     assistant: { send: bind('AI-01'), history: bind('AI-02') },
     corrections: { confirm: bind('COR-01'), history: bind('COR-02') },
     events: { list: bind('LOG-01') },
-    users: { list: bind('USR-01'), create: bind('USR-02') },
+    users: { list: bind('USR-01'), create: bind('USR-02'), update: bind('USR-03'), revoke: bind('USR-04'), resetPassword: bind('USR-05'), unlock: bind('USR-06') },
   };
 }

@@ -108,6 +108,10 @@ const requests = {
   'COR-02': { path },
   'LOG-01': { query: { incident_id: '100' } },
   'USR-01': { query: { include_deleted: false } },
+  'USR-03': { path: { user_id: '3' }, body: { organization: '변경 기관', role: 'VIEWER' } },
+  'USR-04': { path: { user_id: '3' } },
+  'USR-05': { path: { user_id: '3' } },
+  'USR-06': { path: { user_id: '3' } },
   'USR-02': {
     body: {
       login_id: 'mock-new',
@@ -119,7 +123,7 @@ const requests = {
   },
 };
 const agreed =
-  'AUTH-01 AUTH-02 AUTH-03 USR-01 USR-02 INC-01 INC-02 INC-03 INC-04 PER-01 PER-02 PER-03 PRED-01 PRED-02 PRED-03 PRED-04 PRED-05 RISK-01 WTH-01 MAP-01 MAP-02 MAP-03 MAP-04 BASE-01 BASE-02 BASE-03 BASE-04 RES-01 RES-02 RES-03 RES-04 RES-05 PROP-01 PROP-02 PROP-03 PROP-04 PROP-05 AI-01 AI-02 COR-01 COR-02 LOG-01'.split(
+  'AUTH-01 AUTH-02 AUTH-03 USR-01 USR-02 USR-03 USR-04 USR-05 USR-06 INC-01 INC-02 INC-03 INC-04 PER-01 PER-02 PER-03 PRED-01 PRED-02 PRED-03 PRED-04 PRED-05 RISK-01 WTH-01 MAP-01 MAP-02 MAP-03 MAP-04 BASE-01 BASE-02 BASE-03 BASE-04 RES-01 RES-02 RES-03 RES-04 RES-05 PROP-01 PROP-02 PROP-03 PROP-04 PROP-05 AI-01 AI-02 COR-01 COR-02 LOG-01'.split(
     ' ',
   );
 const success = (data, status = 200) =>
@@ -139,13 +143,13 @@ const failure = (status, code = 'SERVER_CODE') =>
     { status },
   );
 
-test('active contracts include confirmed MAP-03/04, P1 14/P2 18/P3 10', () => {
+test('active contracts include confirmed MAP-03/04, P1 14/P2 18/P3 14', () => {
   assert.deepEqual([...API_IDS].sort(), agreed.sort());
   assert.deepEqual(
     ['P1', 'P2', 'P3'].map(
       (p) => API_IDS.filter((id) => endpoints[id].priority === p).length,
     ),
-    [14, 18, 10],
+    [14, 18, 14],
   );
   assert.deepEqual(Object.keys(createFixtures()).sort(), agreed);
 });
