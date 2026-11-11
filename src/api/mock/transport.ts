@@ -477,7 +477,7 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
         'INC-04': ['expected_perimeter_id'],
         'PER-02': ['geometry', 'observed_at', 'expected_perimeter_id'],
         'PER-03': ['geometry', 'observed_at'],
-        'PRED-01': ['expected_perimeter_id'],
+        'PRED-01': ['expected_perimeter_id', 'mode'],
         'PROP-05': ['expected_prediction_id', 'situation_revision'],
         'AI-01': ['input_text', 'proposal_id', 'item_code'],
         'COR-01': ['confirmation_token'],
@@ -759,6 +759,7 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
           break;
         }
         case 'PRED-01': {
+          if (body.mode != null && !['LIVE', 'DEMO_ELMFIRE'].includes(String(body.mode))) invalid('mode', '지원하지 않는 예측 모드입니다.');
           const i = openIncident(incident!.id);
           if (
             requiredString(body, 'expected_perimeter_id') !==

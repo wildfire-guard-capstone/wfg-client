@@ -3,6 +3,15 @@ import type { ApiClient } from './client.ts';
 import { ApiError } from './errors.ts';
 import { delay, abortReason } from './async.ts';
 
+export function validateOperation(operation: Operation, expectedId?: string): Operation {
+  if (!operation || typeof operation.id !== 'string' || !operation.id ||
+      (expectedId !== undefined && operation.id !== expectedId) ||
+      !['PREDICTION', 'PROPOSAL_REGENERATION'].includes(operation.kind) ||
+      !['QUEUED', 'RUNNING', 'SUCCEEDED', 'FAILED'].includes(operation.status))
+    throw new ApiError({ endpoint: 'PRED-05', kind: 'protocol', code: 'INVALID_RESPONSE', message: '[필요한 정보: 요청한 작업 ID와 유효한 작업 상태]' });
+  return operation;
+}
+
 /** Polling cancellation stops waiting; it does not cancel the server's prediction job. */
 export async function waitForOperation(
   client: ApiClient,
@@ -40,6 +49,7 @@ export async function waitForOperation(
       timeoutMs: remaining,
       ...(options.signal ? { signal: options.signal } : {}),
     });
+    validateOperation(operation, path.operation_id);
     options.onUpdate?.(operation);
     if (operation.status === 'SUCCEEDED' || operation.status === 'FAILED')
       return operation;

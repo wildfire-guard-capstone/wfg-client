@@ -204,6 +204,9 @@ export interface IncidentCreateRequest {
 export interface ExpectedPerimeterRequest {
   expected_perimeter_id: Id;
 }
+export interface PredictionRequest extends ExpectedPerimeterRequest {
+  mode?: 'LIVE' | 'DEMO_ELMFIRE' | null;
+}
 export interface PerimeterReportRequest
   extends InitialPerimeter, ExpectedPerimeterRequest {}
 export type PerimeterCorrectionRequest = InitialPerimeter;
@@ -265,7 +268,7 @@ export interface Operation {
   kind: 'PREDICTION' | 'PROPOSAL_REGENERATION';
   status: OperationStatus;
   stage: string | null;
-  result: { prediction_id?: Id; proposal_id?: Id; correction_id?: Id } | null;
+  result: { prediction_id?: Id; proposal_id?: Id; correction_id?: Id; mode?: 'LIVE' | 'DEMO_ELMFIRE' | null; predictor?: string } | null;
   error: { code: string; message: string } | null;
 }
 

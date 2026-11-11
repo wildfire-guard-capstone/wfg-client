@@ -75,6 +75,7 @@ export function createScreenBridge(
   const raw = new Map<string, C.Incident>();
   const snapshot = new Map<string, IncidentData>();
   const versions = new Map<string, C.ProposalVersion[]>();
+  const predictionOperations = new Map<string, C.Operation>();
   const requests = new Set<AbortController>();
   const incidentSummaries = new Map<string, C.IncidentSummary>();
   let listStatus: 'not-requested' | 'loading' | 'ready' | 'error' =
@@ -130,6 +131,7 @@ export function createScreenBridge(
     raw.clear();
     snapshot.clear();
     versions.clear();
+    predictionOperations.clear();
     errors.clear();
     currentWeather = null;
     counts = resourceCounts(null);
@@ -196,15 +198,16 @@ export function createScreenBridge(
     if (old < 0) S.incidents.push(view);
     else S.incidents[old] = view;
     const st = IS(view.id);
-    st.stale = data.incident.needs_reprediction;
-    st.predicted = data.prediction.status === 'ready';
-    st.predictFailed = data.prediction.status === 'error';
+    st.stale = data.incident.needs_reprediction || (data.prediction.status === 'ready' && (data.prediction.data.perimeter_id !== data.incident.current_perimeter_id || data.prediction.data.id !== data.incident.latest_prediction_id));
+    st.predicted = data.prediction.status === 'ready' && data.slices.status === 'ready' && data.slices.data.features.length > 0;
+    st.predictFailed = data.prediction.status === 'error' || data.slices.status === 'error';
     st.proposalFailed = data.proposal.status === 'error';
     st.latestRisk = riskView(
       data.risk.status === 'ready' ? data.risk.data : null,
       S,
     );
-    st.riskStatus = 'ready';
+    st.riskStatus = data.risk.status === 'error' ? 'failed' : 'ready';
+    S.weather.fetch_status = data.now.status === 'error' ? 'failed' : 'ready';
     st.predPerim = null;
     if (data.prediction.status === 'ready') {
       const p = data.prediction.data;
@@ -323,7 +326,7 @@ export function createScreenBridge(
       if (result?.status === 'error')
         errors.set(`${incidentId}.${name}`, result.error);
   }
-  async function select(id: string, fly = false) {
+  async function select(id: string, fly = false, resultPredictionId?: string) {
     if (pendingIncident === id || disposed) return;
     const ticket = ++selection;
     selectionRequest?.abort();
@@ -336,6 +339,8 @@ export function createScreenBridge(
         id,
         roleToApi(state.role!),
         signal,
+        undefined,
+        resultPredictionId,
       );
       if (!alive(epoch) || ticket !== selection || signal.aborted) return;
       install(data);
@@ -547,32 +552,47 @@ export function createScreenBridge(
       !incident ||
       state.role !== 'commander' ||
       state.predicting ||
+      pendingIncident ||
       incident.status === 'ENDED'
     ) {
       host.notice(`${NULL_TEXT} 예측할 산불 정보가 없습니다.`);
       return;
     }
     const id = incident.id;
+    errors.delete(`${id}.predict`);
     host.busy(true);
     await task(async (signal, epoch) => {
       try {
-        const operation = incident.running_operation_id
+        const saved = predictionOperations.get(id);
+        const resumeId = saved && ['QUEUED', 'RUNNING'].includes(saved.status) ? saved.id : saved?.id === incident.running_operation_id ? null : incident.running_operation_id;
+        const onUpdate = (operation: C.Operation) => {
+          if (!alive(epoch) || signal.aborted) return;
+          predictionOperations.set(id, operation);
+          if (state.incId === id) host.refresh();
+        };
+        const operation = resumeId
           ? await waitForOperation(
               source.client,
-              { incident_id: id, operation_id: incident.running_operation_id },
-              { signal },
+              { incident_id: id, operation_id: resumeId },
+              { signal, onUpdate },
             )
-          : await source.predict(incident, signal);
+          : await source.predict(incident, signal, onUpdate);
         if (operation.status === 'FAILED')
           throw new Error(
-            operation.error?.message ?? '예측 작업이 실패했습니다.',
+            `${operation.error?.code ?? '[필요한 정보: 실패 작업 error.code]'}: ${operation.error?.message ?? '예측 작업이 실패했습니다.'}`,
           );
-        if (!alive(epoch)) return;
-        await select(id);
-        if (alive(epoch) && state.incId === id) host.predictionReady();
+        if (!operation.result?.prediction_id) throw new Error('[필요한 정보: 성공한 예측 작업의 result.prediction_id]');
+        if (!alive(epoch) || state.incId !== id || pendingIncident) return;
+        await select(id, false, operation.result.prediction_id);
+        if (!alive(epoch) || state.incId !== id || pendingIncident) return;
+        const result = snapshot.get(id)?.prediction;
+        if (result?.status !== 'ready' || result.data.id !== operation.result.prediction_id) throw new Error('예측 작업은 완료됐지만 해당 결과를 불러오지 못했습니다.');
+        if (!IS(id).predicted) throw new Error('[필요한 정보: 성공한 예측의 시간별 GeoJSON 도형]');
+        host.predictionReady();
       } catch (cause) {
         if (alive(epoch)) {
           IS(id).predictFailed = true;
+          errors.set(`${id}.predict`, cause);
           host.refresh();
         }
         throw cause;
@@ -1053,6 +1073,30 @@ export function createScreenBridge(
     incidentListError: () => (listError ? error(listError) : ''),
     pendingIncident: () => pendingIncident,
     weather: () => currentWeather,
+    predictionOperation: () => predictionOperations.get(state.incId),
+    predictionFailure: () => errors.get(`${state.incId}.predict`),
+    predictionAt: (hour: number) => {
+      const data = snapshot.get(state.incId);
+      if (data?.prediction.status !== 'ready') return null;
+      if (hour === 0) return data.prediction.data.base_at;
+      return (data.slices.status === 'ready' ? data.slices.data.features.find(f => f.properties.hour === hour)?.properties.at : null) ?? data.prediction.data.slices.find(s => s.hour === hour)?.at ?? null;
+    },
+    predictionWeather: () => {
+      const data = snapshot.get(state.incId)?.weather;
+      return data?.status === 'ready' ? data.data : null;
+    },
+    predictionWeatherFailure: () => {
+      const data = snapshot.get(state.incId)?.weather;
+      return data?.status === 'error' ? data.error : null;
+    },
+    predictionId: () => {
+      const data = snapshot.get(state.incId)?.prediction;
+      return data?.status === 'ready' ? data.data.id : null;
+    },
+    riskData: () => {
+      const data = snapshot.get(state.incId)?.risk;
+      return data?.status === 'ready' ? data.data : null;
+    },
     errors,
     current: (id = state.incId) => raw.get(id),
     empty: () => !raw.has(state.incId),

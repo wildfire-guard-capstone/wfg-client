@@ -69,7 +69,7 @@ export interface ApiContracts {
     C.Perimeter
   >;
   'PRED-01': Contract<
-    Idempotent<IncidentPath, C.ExpectedPerimeterRequest>,
+    Idempotent<IncidentPath, C.PredictionRequest>,
     C.Operation
   >;
   'PRED-02': Contract<Read<PredictionPath>, C.Prediction>;

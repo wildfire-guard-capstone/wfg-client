@@ -415,7 +415,7 @@ export function riskView(raw: C.Risk | null, scenario: Scenario): RiskResult {
       wn: null,
     }));
   return {
-    score: raw?.score ?? null,
+    score: raw?.status === 'UNAVAILABLE' ? null : raw?.score ?? null,
     vars,
     factors: scenario.risk_model.axes.map((axis) => ({
       key: axis.key,

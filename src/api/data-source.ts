@@ -3,7 +3,8 @@ import type { Incident, Id, Operation, Page, UserRole, MapFeatures, AdminArea } 
 import type { RequestFor } from './endpoints.ts';
 import { createIdempotencyKey } from './client.ts';
 import { createApiServices } from './services.ts';
-import { waitForOperation } from './operations.ts';
+import { waitForOperation, validateOperation } from './operations.ts';
+import { validatePrediction, validateSlices, validateRisk } from './screen/predictions.ts';
 import type { IncidentDirectory } from './screen/incidents.ts';
 import { ApiError } from './errors.ts';
 
@@ -118,13 +119,14 @@ export function createApiDataSource(client: ApiClient) {
     role: UserRole,
     signal?: AbortSignal,
     known?: Incident,
+    resultPredictionId?: Id,
   ) {
     const path = { incident_id: id };
     const incident =
       known?.id === id ? known : await incidentDetail(id, signal);
     const predictionPath = {
       ...path,
-      prediction_id: incident.latest_prediction_id!,
+      prediction_id: (resultPredictionId ?? incident.latest_prediction_id)!,
     };
     const reader = role === 'COMMANDER' || role === 'VIEWER';
     const skipped = Promise.resolve({ status: 'not-requested' } as const);
@@ -139,22 +141,22 @@ export function createApiDataSource(client: ApiClient) {
             }),
           ),
         ),
-        reader && incident.latest_prediction_id
-          ? remote(() => api.predictions.get({ path: predictionPath, signal }))
+        reader && predictionPath.prediction_id
+          ? remote(async () => validatePrediction(await api.predictions.get({ path: predictionPath, signal }), id, predictionPath.prediction_id))
           : skipped,
-        reader && incident.latest_prediction_id
-          ? remote(() =>
-              api.predictions.slices({ path: predictionPath, signal }),
+        reader && predictionPath.prediction_id
+          ? remote(async () =>
+              validateSlices(await api.predictions.slices({ path: predictionPath, signal }), predictionPath.prediction_id),
             )
           : skipped,
-        reader && incident.latest_prediction_id
+        reader && predictionPath.prediction_id
           ? remote(() =>
               api.predictions.weather({ path: predictionPath, signal }),
             )
           : skipped,
         reader ? remote(() => api.weather.now({ path, signal })) : skipped,
-        reader && incident.latest_prediction_id
-          ? remote(() => api.risk.get({ path: predictionPath, signal }))
+        reader && predictionPath.prediction_id
+          ? remote(async () => validateRisk(await api.risk.get({ path: predictionPath, signal }), predictionPath.prediction_id))
           : skipped,
         role === 'COMMANDER'
           ? remote(() => api.proposals.latest({ path, signal }))
@@ -203,10 +205,13 @@ export function createApiDataSource(client: ApiClient) {
   ) {
     const operation = await api.predictions.start({
       path: { incident_id: incident.id },
-      body: { expected_perimeter_id: incident.current_perimeter_id },
+      body: { expected_perimeter_id: incident.current_perimeter_id, mode: 'LIVE' },
       idempotencyKey: createIdempotencyKey(),
       signal,
     });
+    validateOperation(operation);
+    onUpdate?.(operation);
+    if (operation.status === 'SUCCEEDED' || operation.status === 'FAILED') return operation;
     return waitForOperation(
       client,
       { incident_id: incident.id, operation_id: operation.id },

@@ -1994,7 +1994,7 @@ export function createMockRuntime() {
     const st = IS();
     st.t = Math.max(0, Math.min(8, t));
     $('#time-slider').value = String(st.t);
-    const d = addH(T0, st.t);
+    const d = dataBridge ? new Date(dataBridge.predictionAt(st.t) || NaN) : addH(T0, st.t);
     $('#time-label').innerHTML =
       inc().status === '종료'
         ? `${hhmm(T0)}<small>종료 — 예측 미표시</small>`
@@ -4854,6 +4854,22 @@ export function createMockRuntime() {
   function syncApiValues() {
     if (!dataBridge) return;
     const pending = dataBridge.pendingIncident();
+    const operation = dataBridge.predictionOperation();
+    const predictionFailure = dataBridge.predictionFailure();
+    if (!pending && state.role !== 'reporter' && inc().status !== '종료') {
+      const note = $('#pred-note');
+      if (predictionFailure || operation?.status === 'FAILED') {
+        note.textContent = IS().predicted ? '예측 실패 · 이전 결과 표시' : '예측 실패';
+        note.title = predictionFailure instanceof Error ? predictionFailure.message : operation?.error?.message || '';
+      } else if (operation && ['QUEUED', 'RUNNING'].includes(operation.status)) {
+        note.textContent = (operation.status === 'QUEUED' ? '예측 대기 중' : '예측 계산 중') + (IS().predicted ? ' · 이전 결과' : '');
+        note.title = operation.stage || '';
+      } else if (operation?.status === 'SUCCEEDED' && operation.result?.prediction_id !== dataBridge.predictionId()) {
+        note.textContent = '예측 결과 불러오는 중';
+      }
+    }
+    const risk = dataBridge.riskData();
+    if ($('#risk-box')) $('#risk-box').title = IS().riskStatus === 'failed' ? '위험도 조회 실패' : risk ? `${risk.status} · ${risk.method_version || '[필요한 정보: 위험도 계산 방식]'}${risk.unavailable_reasons.length ? ' · ' + risk.unavailable_reasons.join(' · ') : ''}` : '위험도 조회 결과 없음';
     const missing = !!pending || dataBridge.empty();
     if (state.markers.f0)
       state.markers.f0.getElement().style.display = missing ? 'none' : '';
@@ -4879,6 +4895,12 @@ export function createMockRuntime() {
     }
     $$('#st-detail tr').forEach((row) => {
       const cells = row.querySelectorAll('td');
+      if (cells[0]?.textContent === '기상') {
+        const weather = dataBridge.predictionWeather();
+        const failure = dataBridge.predictionWeatherFailure();
+        cells[1].title = failure ? `예측 사용 기상 조회 실패: ${failure instanceof Error ? failure.message : String(failure)}` : weather ? `예측 사용 기상 (${weather.source})\n${weather.hours.map(h => `${fmtIso(h.at)} · 풍향 ${h.wind_dir ?? '[필요한 정보: 예측 기상 풍향]'}° · 풍속 ${h.wind_speed ?? '[필요한 정보: 예측 기상 풍속]'}m/s · 기온 ${h.temp ?? '[필요한 정보: 예측 기상 기온]'}℃ · 습도 ${h.humidity ?? '[필요한 정보: 예측 기상 습도]'}%`).join('\n')}` : '[필요한 정보: 해당 예측에 사용한 기상 데이터]';
+        if (dataBridge.weather()?.stale) cells[1].title = '현재 관측 갱신 지연 · 마지막 관측값 표시\n' + cells[1].title;
+      }
       if (cells[0]?.textContent === '발생 일시' && !inc().start_time) {
         const span = cells[1].querySelector('span');
         if (span) {
@@ -5194,6 +5216,7 @@ export function createMockRuntime() {
           state.predicting = busy;
           renderPredBar();
           if (busy) $('#btn-predict').textContent = '예측 중…';
+          syncApiValues();
         },
         predictionReady: () => {
           if (map && IS().slices[7]?.length) fitAll();
