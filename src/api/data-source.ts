@@ -122,6 +122,7 @@ export function createApiDataSource(client: ApiClient) {
     signal?: AbortSignal,
     known?: Incident,
     resultPredictionId?: Id,
+    resultProposalId?: Id,
   ) {
     const path = { incident_id: id };
     const incident =
@@ -161,7 +162,7 @@ export function createApiDataSource(client: ApiClient) {
           ? remote(async () => validateRisk(await api.risk.get({ path: predictionPath, signal }), predictionPath.prediction_id))
           : skipped,
         role === 'COMMANDER'
-          ? remote(async () => validateProposal(await api.proposals.latest({ path, signal })))
+          ? remote(async () => resultProposalId ? validateProposal(await api.proposals.get({ path: { ...path, proposal_id: resultProposalId }, signal }), resultProposalId) : validateProposal(await api.proposals.latest({ path, signal })))
           : skipped,
       ]);
     signal?.throwIfAborted();
@@ -276,14 +277,17 @@ export function createApiDataSource(client: ApiClient) {
           signal,
         }),
       )).map(message => validateQa(message, incidentId)),
-    corrections: (incidentId: Id, signal?: AbortSignal) =>
-      allPages((cursor) =>
+    corrections: async (incidentId: Id, signal?: AbortSignal) =>
+      (await allPages((cursor) =>
         api.corrections.history({
           path: { incident_id: incidentId },
           query: { cursor, limit: 100 },
           signal,
         }),
-      ),
+      )).map(row => {
+        if (row.incident_id !== incidentId) throw new ApiError({ endpoint: 'COR-02', kind: 'protocol', code: 'INVALID_RESPONSE', message: '[필요한 정보: 선택한 산불의 정정 이력]' });
+        return row;
+      }),
     events: (incidentId?: Id, signal?: AbortSignal) =>
       allPages((cursor) =>
         api.events.list({

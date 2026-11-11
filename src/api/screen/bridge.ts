@@ -8,7 +8,7 @@ import type {
 } from '../../types/domain.ts';
 import type { Scenario, Account, Ring } from '../../types/scenario.ts';
 import { createIdempotencyKey } from '../client.ts';
-import { waitForOperation } from '../operations.ts';
+import { waitForOperation, validateOperation } from '../operations.ts';
 import { remote } from '../data-source.ts';
 import { incidentDetailsView, incidentListRow } from './incidents.ts';
 import { validateAssistant } from './assistant.ts';
@@ -98,6 +98,8 @@ export function createScreenBridge(
     issuing = false;
   let expiryTimer: ReturnType<typeof setTimeout> | undefined;
   const confirming = new Set<string>();
+  const savedConfirmations = new Set<string>();
+  const regenerating = new Set<string>();
   let counts = resourceCounts(null);
   let currentWeather: C.WeatherNow | null = null;
   let currentUser: C.User | null = null;
@@ -138,6 +140,9 @@ export function createScreenBridge(
     snapshot.clear();
     versions.clear();
     predictionOperations.clear();
+    confirming.clear();
+    savedConfirmations.clear();
+    regenerating.clear();
     errors.clear();
     currentWeather = null;
     counts = resourceCounts(null);
@@ -333,7 +338,7 @@ export function createScreenBridge(
       if (result?.status === 'error')
         errors.set(`${incidentId}.${name}`, result.error);
   }
-  async function select(id: string, fly = false, resultPredictionId?: string) {
+  async function select(id: string, fly = false, resultPredictionId?: string, resultProposalId?: string) {
     if (pendingIncident === id || disposed) return;
     const ticket = ++selection;
     selectionRequest?.abort();
@@ -348,6 +353,7 @@ export function createScreenBridge(
         signal,
         undefined,
         resultPredictionId,
+        resultProposalId,
       );
       if (!alive(epoch) || ticket !== selection || signal.aborted) return;
       install(data);
@@ -716,87 +722,72 @@ export function createScreenBridge(
       host.diff(a, b);
     });
   }
-  async function regenerate(
-    incident: C.Incident,
-    revision: string,
-    signal: AbortSignal,
-  ) {
-    if (!incident.latest_prediction_id)
-      throw new Error('제안 재생성에 필요한 예측 ID가 없습니다.');
+  async function regenerationResult(id: string, initial: C.Operation, signal: AbortSignal) {
+    validateOperation(initial);
+    if (initial.kind !== 'PROPOSAL_REGENERATION') throw new Error('[필요한 정보: 제안 재생성 작업 종류]');
+    const result = ['SUCCEEDED', 'FAILED'].includes(initial.status) ? initial : await waitForOperation(source.client, { incident_id: id, operation_id: initial.id }, { signal });
+    if (result.kind !== 'PROPOSAL_REGENERATION') throw new Error('[필요한 정보: 제안 재생성 완료 작업 종류]');
+    if (result.status === 'FAILED') throw new Error(`${result.error?.code ?? 'REGENERATION_FAILED'}: ${result.error?.message ?? '제안 재생성 실패'}`);
+    if (!result.result?.proposal_id) throw new Error('[필요한 정보: 재생성 성공 작업의 result.proposal_id]');
+    return result;
+  }
+  async function regenerate(incident: C.Incident, revision: string, signal: AbortSignal) {
+    if (!incident.latest_prediction_id) throw new Error('[필요한 정보: 제안 재생성에 사용할 최신 예측 ID]');
     const operation = await source.api.proposals.regenerate({
       path: { incident_id: incident.id },
-      body: {
-        expected_prediction_id: incident.latest_prediction_id,
-        situation_revision: revision,
-      },
-      idempotencyKey: createIdempotencyKey(),
-      signal,
+      body: { expected_prediction_id: incident.latest_prediction_id, situation_revision: revision },
+      idempotencyKey: createIdempotencyKey(), signal,
     });
-    return waitForOperation(
-      source.client,
-      { incident_id: incident.id, operation_id: operation.id },
-      { signal },
-    );
+    return regenerationResult(incident.id, operation, signal);
   }
-  async function confirm(preview: C.CorrectionPreview, id: string) {
-    if (confirming.has(preview.confirmation_token)) return;
+  async function confirm(preview: C.CorrectionPreview, id: string, selected = selection) {
+    if (confirming.has(preview.confirmation_token) || savedConfirmations.has(preview.confirmation_token)) return;
+    if (state.role !== 'commander' || state.incId !== id || pendingIncident || selection !== selected) {
+      host.notice('산불 선택이 변경되었습니다. 현재 산불에서 정정 확인안을 다시 요청하십시오.'); return;
+    }
+    if (Date.parse(preview.expires_at) <= Date.now() || raw.get(id)?.situation_revision !== preview.situation_revision) {
+      host.notice('정정 확인안이 만료되었거나 상황이 바뀌었습니다. 확인안을 다시 요청하십시오.'); return;
+    }
     confirming.add(preview.confirmation_token);
+    const current = () => state.incId === id && selection === selected && !pendingIncident;
     try {
       await task(async (signal, epoch) => {
         const saved = await source.api.corrections.confirm({
-          path: { incident_id: id },
-          body: { confirmation_token: preview.confirmation_token },
-          idempotencyKey: createIdempotencyKey(),
-          signal,
+          path: { incident_id: id }, body: { confirmation_token: preview.confirmation_token },
+          idempotencyKey: createIdempotencyKey(), signal,
         });
         if (!alive(epoch)) return;
-        host.message('sys', '상황 정정을 저장했습니다.');
+        savedConfirmations.add(preview.confirmation_token);
+        if (saved.correction?.incident_id !== id || typeof saved.situation_revision !== 'string') throw new Error('[필요한 정보: 저장된 정정의 산불 ID·상황 버전]');
+        if (current()) host.message('sys', '상황 정정을 저장했습니다.');
+        let proposalId: string | undefined;
         try {
-          const operation = saved.proposal_operation
-            ? await waitForOperation(
-                source.client,
-                { incident_id: id, operation_id: saved.proposal_operation.id },
-                { signal },
-              )
-            : null;
-          if (operation?.status === 'FAILED')
-            throw new Error(operation.error?.message ?? '제안 재생성 실패');
+          if (saved.proposal_operation) proposalId = (await regenerationResult(id, saved.proposal_operation, signal)).result!.proposal_id;
+          else if (saved.proposal_stale) throw new Error('정정은 저장됐지만 제안 재생성이 시작되지 않았습니다.');
         } catch (cause) {
-          if (!signal.aborted && alive(epoch))
-            host.modal(
-              '제안 재생성 실패',
-              escaped(`정정은 저장됐습니다. ${error(cause)}`),
-              [
-                { label: '닫기' },
-                {
-                  label: '재생성 재시도',
-                  cls: 'primary',
-                  onClick: () =>
-                    void task(async (retrySignal, retryEpoch) => {
-                      const incident = await source.api.incidents.get({
-                        path: { incident_id: id },
-                        signal: retrySignal,
-                      });
-                      const result = await regenerate(
-                        incident,
-                        saved.situation_revision,
-                        retrySignal,
-                      );
-                      if (result.status === 'FAILED')
-                        throw new Error(
-                          result.error?.message ?? '제안 재생성 실패',
-                        );
-                      if (alive(retryEpoch)) await select(id);
-                    }),
-                },
-              ],
-            );
+          errors.set(`${id}.regeneration`, cause);
+          if (!signal.aborted && alive(epoch) && current()) host.modal(
+            '제안 재생성 실패', escaped(`정정은 저장됐습니다. ${error(cause)}`), [
+              { label: '닫기' },
+              { label: '재생성 재시도', cls: 'primary', onClick: () => {
+                if (regenerating.has(id) || state.role !== 'commander' || state.incId !== id || pendingIncident) return;
+                regenerating.add(id);
+                const retrySelection = selection;
+                return task(async (retrySignal, retryEpoch) => {
+                  try {
+                    const incident = await source.api.incidents.get({ path: { incident_id: id }, signal: retrySignal });
+                    if (incident.id !== id) throw new Error('[필요한 정보: 요청한 산불 ID와 일치하는 현황 응답]');
+                    const result = await regenerate(incident, saved.situation_revision, retrySignal);
+                    if (alive(retryEpoch) && state.incId === id && selection === retrySelection && !pendingIncident) await select(id, false, undefined, result.result!.proposal_id);
+                  } finally { regenerating.delete(id); }
+                });
+              } },
+            ],
+          );
         }
-        if (alive(epoch)) await select(id);
+        if (alive(epoch) && current()) await select(id, false, undefined, proposalId);
       });
-    } finally {
-      confirming.delete(preview.confirmation_token);
-    }
+    } finally { confirming.delete(preview.confirmation_token); }
   }
   async function sendChat() {
     const q = input('chat-input');
@@ -835,7 +826,7 @@ export function createScreenBridge(
         if (response.type === 'ANSWER') host.answer(response.message);
         else if (response.type === 'UNSUPPORTED')
           host.message('bot', response.reason);
-        else host.preview(response, () => void confirm(response, id));
+        else host.preview(response, () => confirm(response, id, selected));
       } catch (cause) {
         if (alive(epoch)) errors.set(`${id}.messages.send`, cause);
         if (alive(epoch) && id === state.incId && ticket === chatTicket && selected === selection)
