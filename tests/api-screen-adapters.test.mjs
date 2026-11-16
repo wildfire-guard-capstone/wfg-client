@@ -129,7 +129,10 @@ test('risk view takes units from the scenario by server variable code', () => {
   assert.equal(unit('humidity'), '%');
   assert.equal(unit('fire_station_distance'), 'km');
   assert.equal(unit('fire_area'), 'ha');
-  assert.equal(unit('houses_nearby'), '채');
+  assert.equal(unit('houses_nearby'), '동');
+  assert.equal(unit('curvature'), '1/100 m');
+  assert.equal(unit('topographic_position'), 'm');
+  assert.equal(unit('terrain_complexity'), 'm');
   assert.ok(view.vars.every((v) => v.unit !== 'NULL' && v.unit !== '[NULL]'));
 });
 test('risk-1 responses (no combine) keep the old single weighted average view', () => {
