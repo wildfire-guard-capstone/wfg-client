@@ -418,8 +418,14 @@ const SCREEN_VAR_KEY: Record<string, string> = {
   vulnerable_population: 'vuln',
   fire_station_distance: 'fire_st',
 };
-/** 시나리오에 없는 서버 변수(risk-2 추가)의 단위 */
-const EXTRA_UNITS: Record<string, string> = { fire_area: 'ha', houses_nearby: '채' };
+/** 서버 계산 단위가 시나리오(목업, 단위 없음)와 다르거나 시나리오에 없는 변수. 서버 risk/criteria.py 기준 */
+const SERVER_UNITS: Record<string, string> = {
+  curvature: '1/100 m',
+  topographic_position: 'm',
+  terrain_complexity: 'm',
+  fire_area: 'ha',
+  houses_nearby: '동',
+};
 const apiAxis = (key: string) => (key === 'infra' ? 'infrastructure' : key);
 const screenAxis = (key: string) => (key === 'infrastructure' ? 'infra' : key);
 
@@ -445,7 +451,7 @@ export function riskView(raw: C.Risk | null, scenario: Scenario): RiskResult {
         key: f.code,
         axis: screenAxis(f.axis),
         name: f.name,
-        unit: meta?.unit ?? EXTRA_UNITS[f.code] ?? NULL_TEXT,
+        unit: SERVER_UNITS[f.code] ?? meta?.unit ?? NULL_TEXT,
         w: f.weight,
         mode: meta?.mode ?? '',
         value: f.raw_value,
