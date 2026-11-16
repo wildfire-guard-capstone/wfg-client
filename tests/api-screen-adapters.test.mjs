@@ -121,6 +121,17 @@ test('null risk stays null with 4 axes and 23 rows; raw risk scores are not reco
     assert.ok(Math.abs(fs.reduce((sum, f) => sum + f.weight, 0) - 1) < 1e-10);
   }
 });
+test('risk view takes units from the scenario by server variable code', () => {
+  const S = createScenario(),
+    view = riskView(createFixtures()['RISK-01'], S);
+  const unit = (code) => view.vars.find((v) => v.key === code).unit;
+  assert.equal(unit('wind_speed'), 'm/s');
+  assert.equal(unit('humidity'), '%');
+  assert.equal(unit('fire_station_distance'), 'km');
+  assert.equal(unit('fire_area'), 'ha');
+  assert.equal(unit('houses_nearby'), '채');
+  assert.ok(view.vars.every((v) => v.unit !== 'NULL' && v.unit !== '[NULL]'));
+});
 test('risk-1 responses (no combine) keep the old single weighted average view', () => {
   const S = createScenario(),
     raw = createFixtures()['RISK-01'];

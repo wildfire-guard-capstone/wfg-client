@@ -392,6 +392,34 @@ export function versionView(
 const HAZARD_AXES: readonly string[] = ['weather', 'terrain', 'fuel', 'scale'];
 /** scenario.risk_model.axes에 없는 서버 축(risk-2에서 추가) */
 const EXTRA_AXES: Record<string, string> = { scale: '규모', exposure: '노출' };
+/** 서버 변수 코드(RiskFactor.code) → 화면 시나리오 변수 키(단위 · 판정 방식을 여기서 읽음) */
+const SCREEN_VAR_KEY: Record<string, string> = {
+  slope_up: 'slope',
+  aspect: 'aspect',
+  curvature: 'curv',
+  terrain_complexity: 'rough',
+  elevation: 'elev',
+  topographic_position: 'tpi',
+  water_distance: 'water',
+  fuel_load: 'load',
+  forest_type: 'species',
+  surface_fuel_depth: 'depth',
+  stand_age: 'age',
+  canopy_height: 'cht',
+  canopy_cover: 'cover',
+  fuel_moisture: 'moist',
+  wind_speed: 'wind',
+  humidity: 'rh',
+  temperature: 'temp',
+  precipitation: 'rain',
+  ground_temperature: 'gtemp',
+  precipitation_7d: 'rain7',
+  pressure: 'pres',
+  vulnerable_population: 'vuln',
+  fire_station_distance: 'fire_st',
+};
+/** 시나리오에 없는 서버 변수(risk-2 추가)의 단위 */
+const EXTRA_UNITS: Record<string, string> = { fire_area: 'ha', houses_nearby: '채' };
 const apiAxis = (key: string) => (key === 'infra' ? 'infrastructure' : key);
 const screenAxis = (key: string) => (key === 'infrastructure' ? 'infra' : key);
 
@@ -410,13 +438,14 @@ export function riskView(raw: C.Risk | null, scenario: Scenario): RiskResult {
   };
   const vars =
     raw?.factors.map((f) => {
-      const meta = scenario.risk_model.vars.find((v) => v.key === f.code);
+      const screenKey = SCREEN_VAR_KEY[f.code] ?? f.code;
+      const meta = scenario.risk_model.vars.find((v) => v.key === screenKey);
       const den = denominator(f.axis);
       return {
         key: f.code,
         axis: screenAxis(f.axis),
         name: f.name,
-        unit: meta?.unit ?? NULL_TEXT,
+        unit: meta?.unit ?? EXTRA_UNITS[f.code] ?? NULL_TEXT,
         w: f.weight,
         mode: meta?.mode ?? '',
         value: f.raw_value,
