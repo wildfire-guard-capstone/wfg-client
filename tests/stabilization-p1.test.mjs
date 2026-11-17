@@ -170,6 +170,15 @@ test('four-step proposal (11/18): 현황 folded, details under its proposal, not
   assert.ok(missing.includes('<b>군사시설</b> — 위치 정보 없음'));
   assert.equal(missingHTML([{ title: '', blocks: [] }], []), '');
 });
+test('old proposal (before four steps): 「대응 제안」 section title reads 「제안」', () => {
+  const html = sectionHTML(
+    [{ title: '대응 제안', blocks: [{ type: 'failed', text: '검사를 통과한 제안이 없습니다.' }] }],
+    {},
+    'E2',
+  );
+  assert.ok(html.includes('<b class="section-title">제안</b>') && !html.includes('대응 제안'));
+  assert.ok(html.includes('검사를 통과한 제안이 없습니다.'));
+});
 test('P1 remote states distinguish no generation, null, empty arrays, forbidden, server failure, partial and loading', () => {
   assert.equal(remoteState({ status: 'ready', data: 0 }), 'ready');
   assert.equal(remoteState({ status: 'ready', data: false }), 'ready');
