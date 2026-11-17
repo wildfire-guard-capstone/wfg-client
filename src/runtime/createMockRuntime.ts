@@ -14,6 +14,7 @@ import { createApiDataSource, type ApiDataSource } from '../api/data-source';
 import { villageEvacuated, evacuationText } from '../api/screen/incidents';
 import { retainMapData, mapRenderData, type MapWindow, type MapMarker } from '../api/screen/maps';
 import { createScreenBridge, type ScreenBridge } from '../api/screen/bridge';
+import { PROPOSAL_CODES } from '../api/screen/proposals';
 import { screenMockOptions } from '../api/screen/mock-seed';
 import {
   NULL_TEXT,
@@ -2839,6 +2840,15 @@ export function createMockRuntime() {
       run = st.viewRun,
       isCurrent = run === st.currentRun,
       closed = inc().status === '종료';
+    // API 모드(2026-11-18): 진화 · 대피 탭의 항목 범위는 서버 계약 항목(S1~S6 · E1~E6)으로.
+    // 시나리오 모드는 자체 목록(S1~S7 · E1~E7)이라 탭 글을 그대로 둔다
+    if (dataBridge)
+      $$('.ptabs .ptab').forEach((tab) => {
+        const codes = PROPOSAL_CODES.filter(
+          (code) => code[0] === (tab.dataset.axis === '진화' ? 'S' : 'E'),
+        );
+        tab.textContent = `${tab.dataset.axis} (${codes[0]}~${codes[codes.length - 1]})`;
+      });
     $('#prop-warn').innerHTML =
       st.proposalFailed && !closed
         ? `<div style="margin-bottom:6px">${warnHTML(run ? '새 대응 제안 정보를 가져오지 못했습니다' : '대응 제안 정보를 가져오지 못했습니다')}</div>`

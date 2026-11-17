@@ -400,7 +400,9 @@ export function sectionHTML(
       : prose;
   };
   // 소제목 앞 번호(「1. 진화 우선순위」)는 뗀다 — 네 단계 배치에서는 판정 자료만 소제목을 갖는다
-  const title = (value?: string) => value?.replace(/^\s*\d+\.\s*/, '');
+  // 옛 제안서(네 단계 전)의 「대응 제안」 섹션 제목은 지금 화면 말인 「제안」으로
+  const title = (value?: string) =>
+    value?.replace(/^\s*\d+\.\s*/, '').replace(/^대응 제안$/, '제안');
   return sections
     .map((section, s) => {
       const previous = comparison?.sections[s];
