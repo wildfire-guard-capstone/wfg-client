@@ -1,4 +1,4 @@
-import { richText, contentHTML, withCitations, comparisonHTML, sectionHTML, stateText, remoteState, canCorrectPerimeter } from '../api/screen/presentation';
+import { richText, contentHTML, withCitations, comparisonHTML, sectionHTML, missingHTML, stateText, remoteState, canCorrectPerimeter } from '../api/screen/presentation';
 import type {
   Feature,
   FeatureCollection,
@@ -2881,28 +2881,31 @@ export function createMockRuntime() {
             return `<span class="ev"><span class="cite" data-b="${b.id}" data-k="${e.k}">${e.k}</span> ${esc(c.doc)} ${esc(c.page)} ${esc(c.section)}</span>`;
           })
           .join('') || (dataBridge ? NULL_TEXT : '—');
-      return `<div class="card axis-${b.axis}" data-id="${b.id}">
-        <div class="head"><span class="arrow">▶</span><span class="nm">${esc(b.name)}</span>${changed ? `<span class="chg-tag" data-chg="${b.id}" title="직전 버전 대비 변경 내용 보기">변경</span>` : ''}<span class="st">${badges(b.apiState ? [...b.status, ({ GENERATED: '생성 완료', PARTIAL: '부분 생성', FAILED: '생성 실패', NOT_TRIGGERED: '미발동', REUSED: '재사용' })[b.apiState]] : b.status)}</span></div>
-        <div class="sum">
-          <div class="text">${b.apiSections ? sectionHTML(b.apiSections, b.apiChunks || {}, b.id) : citeHTML(b.text, b.id)}</div>
-          ${b.withheld.map((w) => `<div class="withheld"><b>${esc(w.slot)}</b> — ${richText(w.why || NO_EVIDENCE)}</div>`).join('')}
-        </div>
-        <div class="body">
-          <div class="detail">
+      // API 제안서 카드(2026-11-18): 처음엔 펼친 채, 머리(▶)를 누르면 카드 전체가 접힌다.
+      // 판정 이유 · 근거는 카드 안 「판정 이유 · 근거」 접기로(근거 번호 누르기는 그대로), 「이 항목 질문」 단추는 두지 않는다
+      const api = Boolean(b.apiSections);
+      const basis = `<div class="detail">
             ${b.finding ? `<div class="row"><span class="k">판정 이유</span><span class="v">${esc(b.finding)}</span></div>` : ''}
             ${b.targets.length ? `<div class="row"><span class="k">대상</span><span class="v">${esc(b.targets.join(', '))}</span></div>` : ''}
             <div class="row"><span class="k">권한</span><span class="v">${esc(b.authority)}</span></div>
             <div class="row"><span class="k">근거</span><span class="v">${evid}</span></div>
           </div>
-          ${canOperate() ? `<div class="actions"><button class="ask-btn" data-id="${b.id}">이 항목 질문</button></div>` : ''}
-        </div></div>`;
+          ${canOperate() && !api ? `<div class="actions"><button class="ask-btn" data-id="${b.id}">이 항목 질문</button></div>` : ''}`;
+      return `<div class="card axis-${b.axis}${api ? ' api open' : ''}" data-id="${b.id}">
+        <div class="head"><span class="arrow">▶</span><span class="nm">${esc(b.name)}</span>${changed ? `<span class="chg-tag" data-chg="${b.id}" title="직전 버전 대비 변경 내용 보기">변경</span>` : ''}<span class="st">${badges(b.apiSections ? (b.apiState && b.apiState !== 'GENERATED' ? [({ PARTIAL: '부분 생성', FAILED: '생성 실패', NOT_TRIGGERED: '미발동', REUSED: '재사용' })[b.apiState]] : []) : b.status)}</span></div>
+        <div class="sum">
+          <div class="text">${api ? sectionHTML(b.apiSections, b.apiChunks || {}, b.id, undefined, { gatherNotes: true }) + `<div class="card-basis fold" role="group" aria-label="판정 이유 · 근거"><button type="button" class="fold-toggle" aria-expanded="false">판정 이유 · 근거</button><div class="fold-body">${basis}</div></div>` + missingHTML(b.apiSections, b.withheld.map((w) => ({ field: w.slot, reason: w.why }))) : citeHTML(b.text, b.id)}</div>
+          ${b.apiSections ? '' : b.withheld.map((w) => `<div class="withheld"><b>${esc(w.slot)}</b> — ${richText(w.why || NO_EVIDENCE)}</div>`).join('')}
+        </div>
+        ${api ? '' : `<div class="body">${basis}</div>`}</div>`;
     };
     box.innerHTML =
       active.map(card).join('') +
       (active.length
         ? ''
         : `<div class="muted" style="padding:14px 6px;text-align:center">해당하는 항목이 없습니다.</div>`);
-    $$('#cards .card .head, #cards .card .sum').forEach((h) =>
+    // API 카드는 머리만 누른다(본문을 눌러도 접히지 않게 — 접기 단추 · 근거 번호가 본문 안에 있다)
+    $$('#cards .card .head, #cards .card:not(.api) .sum').forEach((h) =>
       h.addEventListener('click', () => {
         const c = h.closest<HTMLElement>('.card');
         c.classList.toggle('open');
@@ -2917,6 +2920,15 @@ export function createMockRuntime() {
             c,
           );
         else focusTargets(null);
+      }),
+    );
+    // 네 단계 제안서: 「현황」 · 「제안」 · 「자세히 보기」 · 「빠진 정보」를 따로 접는다(카드 펼침은 그대로).
+    // 구분 태그는 제안 문장마다(presentation.ts) — API 카드 머리에는 상태 태그만
+    $$('#cards .fold-toggle').forEach((t) =>
+      t.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const open = t.closest<HTMLElement>('.fold').classList.toggle('open');
+        t.setAttribute('aria-expanded', String(open));
       }),
     );
     $$('#cards .chg-tag').forEach((t) =>

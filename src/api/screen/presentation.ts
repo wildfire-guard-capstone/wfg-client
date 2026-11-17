@@ -47,11 +47,14 @@ export const escapeHTML = (value: unknown) =>
         c
       ]!,
   );
-/** Only br tokens become line breaks. Every other server tag remains escaped text. */
+/** Only br tokens become line breaks. Every other server tag remains escaped text.
+ *  규칙 엔진 목록의 굵게 표기(`**괴산리**`)는 굵은 글씨로, 짝이 맞지 않는 `**`는 지운다(2026-11-17). */
 export function richText(value: unknown, blockId?: string): string {
   const escaped = escapeHTML(
     String(value ?? '').replace(/<br\s*\/?\s*>/gi, '\n'),
-  );
+  )
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/\*\*/g, '');
   const lines = escaped.replace(/\r\n?/g, '\n').replace(/\n/g, '<br>');
   return blockId === undefined
     ? lines
@@ -206,19 +209,79 @@ function proseHTML(value: string, blockId: string, difference?: Difference) {
     ? '<div class="proposal-prose">' + html + '</div>'
     : '<p>' + html + '</p>';
 }
+// 목록 줄이 스스로 가진 번호: ①~⑳, 「1.」 「1)」
+const OWN_NUMBER = /^\s*(?:[①-⑳]|\d+[.)])/;
+// 제안 문장마다 그 구분(즉시 · 대기 · 협의 · 요청)을 앞에 붙인다(2026-11-17 — 카드 머리에 모아 붙이면
+// 한 항목에 「즉시」와 「대기」가 함께 보여 어느 할 일이 어느 구분인지 알 수 없었다)
+const CATEGORY_LABEL: Record<string, string> = {
+  IMMEDIATE: '즉시',
+  STANDBY: '대기',
+  CONSULT: '협의',
+  REQUEST: '요청',
+};
+function withCategory(category: string | undefined, html: string): string {
+  const label = category ? CATEGORY_LABEL[category] : undefined;
+  if (!label) return html;
+  const tag =
+    '<span class="badge b-' + label + ' prop-cat">' + label + '</span> ';
+  return html.startsWith('<p>')
+    ? '<p>' + tag + html.slice(3)
+    : '<div class="prop-cat-row">' + tag + '</div>' + html;
+}
 type SectionDifference = {
   sections: ProposalSection[];
   chunks: Record<string, number>;
   side: Difference['side'];
 };
+type Block = ProposalSection['blocks'][number];
+type DetailBlock = NonNullable<
+  Extract<Block, { type: 'paragraph' }>['details']
+>[number];
+export interface SectionOptions {
+  /** ※ 안내(note)를 섹션에 두지 않고 빼 둔다 — missingHTML이 「빠진 정보」 한 곳에 모은다 */
+  gatherNotes?: boolean;
+}
+/** 접기 단추(누르는 동작은 createMockRuntime이 `.fold-toggle`에 붙인다) */
+const foldToggle = (open: boolean, text: string) =>
+  '<button type="button" class="fold-toggle" aria-expanded="' +
+  open +
+  '">' +
+  escapeHTML(text) +
+  '</button>';
+/** 접히는 부분: fixed(버전 비교 화면)면 단추 없이 펼친 채 제목만 */
+function foldHTML(
+  className: string,
+  title: string,
+  body: string,
+  open: boolean,
+  fixed: boolean,
+): string {
+  return (
+    '<div class="' +
+    className +
+    ' fold' +
+    (open || fixed ? ' open' : '') +
+    '" role="group" aria-label="' +
+    escapeHTML(title) +
+    '">' +
+    (fixed
+      ? '<b class="part-title">' + escapeHTML(title) + '</b>'
+      : foldToggle(open, title)) +
+    '<div class="fold-body">' +
+    body +
+    '</div></div>'
+  );
+}
 export function sectionHTML(
   sections: ProposalSection[],
   chunks: Record<string, number>,
   blockId: string,
   comparison?: SectionDifference,
+  options: SectionOptions = {},
 ): string {
+  const fixed = Boolean(comparison);
   const paragraph = (
-    block: Extract<ProposalSection['blocks'][number], { type: 'paragraph' }>,
+    block: Extract<Block, { type: 'paragraph' }>,
     refs: Record<string, number>,
   ) =>
     withCitations(
@@ -232,94 +295,203 @@ export function sectionHTML(
         )
         .map((id) => '[' + refs[id] + ']'),
     );
+  const diffOf =
+    (side?: Difference['side']) =>
+    (text?: string): Difference | undefined =>
+      side ? { side, text } : undefined;
+  /** 블록 하나(목록 · 표는 제안의 자세한 자료에도 같이 쓴다) */
+  const blockHTML = (
+    block: Block | DetailBlock,
+    old: Block | DetailBlock | undefined,
+  ): string => {
+    const diff = diffOf(comparison?.side);
+    if (block.type === 'fact')
+      return proseHTML(
+        block.text,
+        blockId,
+        diff(old?.type === 'fact' ? old.text : undefined),
+      );
+    if (block.type === 'paragraph') {
+      const line = withCategory(
+        block.category,
+        proseHTML(
+          paragraph(block, chunks),
+          blockId,
+          diff(
+            old?.type === 'paragraph'
+              ? paragraph(old, comparison!.chunks)
+              : undefined,
+          ),
+        ),
+      );
+      // 그 제안의 자세한 자료(서버 2026-11-18 details): 문장 밑 「자세히 보기」, 처음엔 접힘
+      const details = block.details ?? [];
+      const oldDetails = old?.type === 'paragraph' ? (old.details ?? []) : [];
+      return details.length
+        ? line +
+            foldHTML(
+              'prop-detail',
+              '자세히 보기',
+              details.map((d, i) => blockHTML(d, oldDetails[i])).join(''),
+              false,
+              fixed,
+            )
+        : line;
+    }
+    if (block.type === 'list') {
+      const tag =
+        block.style === 'ordered' || block.style === 'numbered' ? 'ol' : 'ul';
+      // 줄마다 이미 번호(①, 1.)가 있으면 자동 번호를 끈다(「1. ① 인명」처럼 겹치지 않게)
+      const own = block.rows.every((row) => OWN_NUMBER.test(row.text));
+      return (
+        '<' +
+        tag +
+        (own ? ' class="list-plain"' : '') +
+        '>' +
+        block.rows
+          .map(
+            (row, r) =>
+              '<li>' +
+              contentHTML(
+                row.text,
+                blockId,
+                diff(old?.type === 'list' ? old.rows[r]?.text : undefined),
+              ) +
+              '</li>',
+          )
+          .join('') +
+        '</' +
+        tag +
+        '>'
+      );
+    }
+    if (block.type === 'table')
+      return tableHTML(
+        {
+          type: 'table',
+          format: 'markdown',
+          head: block.head,
+          rows: block.rows,
+        },
+        blockId,
+        old?.type === 'table'
+          ? {
+              type: 'table',
+              format: 'markdown',
+              head: old.head,
+              rows: old.rows,
+            }
+          : undefined,
+        comparison?.side,
+        'dto',
+      );
+    const prose = proseHTML(
+      block.text,
+      blockId,
+      diff(
+        old && (old.type === 'note' || old.type === 'failed')
+          ? old.text
+          : undefined,
+      ),
+    );
+    // ※ 안내는 작고 흐리게
+    return block.type === 'note'
+      ? '<div class="proposal-note">' + prose + '</div>'
+      : prose;
+  };
+  // 소제목 앞 번호(「1. 진화 우선순위」)는 뗀다 — 네 단계 배치에서는 판정 자료만 소제목을 갖는다
+  const title = (value?: string) => value?.replace(/^\s*\d+\.\s*/, '');
   return sections
     .map((section, s) => {
       const previous = comparison?.sections[s];
-      const diff = (text?: string): Difference | undefined =>
-        comparison ? { side: comparison.side, text } : undefined;
+      const keep = section.blocks
+        .map((block, b) => ({ block, old: previous?.blocks[b] }))
+        .filter(({ block }) => !(options.gatherNotes && block.type === 'note'));
+      if (!keep.length) return ''; // ※ 안내만 있던 섹션은 「빠진 정보」로 옮겨 가 비었다
+      const kept = keep.map(({ block }) => block);
+      const rendered = keep.map(({ block, old }) => blockHTML(block, old));
       return (
         '<section class="proposal-section">' +
         (section.title
           ? '<b class="section-title">' +
-            inlineHTML(section.title, undefined, diff(previous?.title)) +
+            inlineHTML(
+              title(section.title)!,
+              undefined,
+              diffOf(comparison?.side)(title(previous?.title)),
+            ) +
             '</b>'
           : '') +
-        section.blocks
-          .map((block, b) => {
-            const old = previous?.blocks[b];
-            if (block.type === 'paragraph')
-              return proseHTML(
-                paragraph(block, chunks),
-                blockId,
-                diff(
-                  old?.type === 'paragraph'
-                    ? paragraph(old, comparison!.chunks)
-                    : undefined,
-                ),
-              );
-            if (block.type === 'list') {
-              const tag =
-                block.style === 'ordered' || block.style === 'numbered'
-                  ? 'ol'
-                  : 'ul';
-              return (
-                '<' +
-                tag +
-                '>' +
-                block.rows
-                  .map(
-                    (row, r) =>
-                      '<li>' +
-                      contentHTML(
-                        row.text,
-                        blockId,
-                        diff(
-                          old?.type === 'list' ? old.rows[r]?.text : undefined,
-                        ),
-                      ) +
-                      '</li>',
-                  )
-                  .join('') +
-                '</' +
-                tag +
-                '>'
-              );
-            }
-            if (block.type === 'table')
-              return tableHTML(
-                {
-                  type: 'table',
-                  format: 'markdown',
-                  head: block.head,
-                  rows: block.rows,
-                },
-                blockId,
-                old?.type === 'table'
-                  ? {
-                      type: 'table',
-                      format: 'markdown',
-                      head: old.head,
-                      rows: old.rows,
-                    }
-                  : undefined,
-                comparison?.side,
-                'dto',
-              );
-            return proseHTML(
-              block.text,
-              blockId,
-              diff(
-                old && (old.type === 'note' || old.type === 'failed')
-                  ? old.text
-                  : undefined,
-              ),
-            );
-          })
-          .join('') +
+        groupedHTML(kept, rendered, fixed) +
         '</section>'
       );
     })
     .join('');
+}
+/**
+ * 네 단계 제안서(서버 2026-11-17): 위 = 「현황」(상황 · 상태 · 판단, 처음엔 접힘), 아래 = 「제안」(paragraph와
+ * 생성 실패 안내, 처음엔 펼침), 그 밑 = 남은 목록 · 표. 카드 안에 상자를 겹치지 않고 구분선으로만 나눈다.
+ * 버전 비교 화면(fixed)은 단추 없이 모두 펼쳐 그린다. fact 블록이 없는 섹션(옛 제안서 · 판정 자료 섹션)은
+ * 예전처럼 블록 순서대로 그린다.
+ */
+function groupedHTML(
+  blocks: Block[],
+  rendered: string[],
+  fixed = false,
+): string {
+  if (!blocks.some((block) => block.type === 'fact')) return rendered.join('');
+  const pick = (keep: (block: Block) => boolean) =>
+    blocks.map((block, b) => (keep(block) ? rendered[b] : '')).join('');
+  const step = (name: string) =>
+    pick((block) => block.type === 'fact' && block.step === name);
+  const facts = step('situation') + step('status') + step('judgment');
+  const actions = pick(
+    (block) => block.type === 'paragraph' || block.type === 'failed',
+  );
+  const rest = pick(
+    (block) =>
+      block.type !== 'fact' &&
+      block.type !== 'paragraph' &&
+      block.type !== 'failed',
+  );
+  return (
+    foldHTML('proposal-facts', '현황', facts, false, fixed) +
+    (actions
+      ? foldHTML('proposal-actions', '제안', actions, true, fixed)
+      : '') +
+    rest
+  );
+}
+/**
+ * 「빠진 정보」 한 곳(2026-11-18): 섹션의 ※ 안내(note)와 항목의 판단하지 않은 것(withheld)을 모아 카드 맨 아래에
+ * 접어 둔다. 모을 것이 없으면 빈 글. sectionHTML(…, { gatherNotes: true })와 함께 쓴다.
+ */
+export function missingHTML(
+  sections: ProposalSection[],
+  withheld: { field: string; reason?: string | null }[] = [],
+): string {
+  const notes = sections.flatMap((section) =>
+    section.blocks.flatMap((block) =>
+      block.type === 'note' ? [block.text.replace(/^\s*※\s*/, '')] : [],
+    ),
+  );
+  const rows = [
+    ...notes.map((text) => richText(text)),
+    ...withheld.map(
+      (w) =>
+        '<b>' +
+        escapeHTML(w.field) +
+        '</b>' +
+        (w.reason ? ' — ' + richText(w.reason) : ''),
+    ),
+  ];
+  if (!rows.length) return '';
+  return foldHTML(
+    'proposal-missing',
+    '빠진 정보',
+    '<ul>' + rows.map((row) => '<li>' + row + '</li>').join('') + '</ul>',
+    false,
+    false,
+  );
 }
 interface ComparisonBlock {
   id: string;
