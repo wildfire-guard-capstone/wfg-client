@@ -1,3 +1,6 @@
+import { MISSING_TEXT } from './presentation.ts';
+import { riskUnit } from './risk-units.ts';
+import { PROPOSAL_CODES } from './proposals.ts';
 import type { Geometry, MultiPolygon, Polygon } from 'geojson';
 import type * as C from '../contracts.ts';
 import type {
@@ -14,9 +17,9 @@ import type {
   RulesResult,
 } from '../../types/domain.ts';
 
-export const NULL_TEXT = '[NULL]';
+export const NULL_TEXT = MISSING_TEXT;
 export const text = (value: unknown): string =>
-  value === null || value === undefined || value === ''
+  value === null || value === undefined || value === '' || (typeof value === 'number' && !Number.isFinite(value))
     ? NULL_TEXT
     : String(value);
 export const numberText = (value: number | null | undefined, digits = 2) =>
@@ -77,7 +80,11 @@ export function incidentView(
   raw: C.Incident,
   perimeters: C.Perimeter[],
 ): ScreenIncident {
-  const villageStates = Object.values(raw.situation?.villages ?? {});
+  const villages = raw.situation?.villages ?? {};
+  const villageStates = Object.values(villages);
+  const evacuated = Object.fromEntries(Object.entries(villages)
+    .filter(([, v]) => typeof v.evacuated === 'boolean')
+    .map(([id, v]) => [id, v.evacuated!]));
   return {
     id: raw.id,
     name: raw.name,
@@ -86,11 +93,11 @@ export function incidentView(
     ignition: raw.ignition_point.coordinates.slice(0, 2) as [number, number],
     start_time: raw.started_at,
     report_time: raw.reported_at,
-    report_text: text(raw.report_text),
+    report_text: raw.report_text ?? '',
     caller: {
-      org: text(raw.reporter_org),
-      name: text(raw.reporter_name),
-      phone: text(raw.reporter_phone),
+      org: raw.reporter_org ?? '',
+      name: raw.reporter_name ?? '',
+      phone: raw.reporter_phone ?? '',
     },
     reported_by: raw.reported_by,
     intake: [],
@@ -110,7 +117,8 @@ export function incidentView(
     evacuation_state: {
       order_issued: villageStates.some((v) => v.evac_order === true),
       cbs_sent: [],
-      completed_villages: [],
+      completed_villages: Object.keys(evacuated).filter(id => evacuated[id] === true),
+      evacuated_by_id: evacuated,
       injuries: [],
     },
     ended_at: raw.ended_at,
@@ -138,6 +146,7 @@ export function emptyIncident(origin: [number, number]): ScreenIncident {
       order_issued: false,
       cbs_sent: [],
       completed_villages: [],
+      evacuated_by_id: {},
       injuries: [],
     },
     ended_at: null,
@@ -149,7 +158,7 @@ export function accountView(user: C.User | C.AdminUser): Account {
   return {
     id: user.login_id,
     pw: '',
-    name: user.name,
+    name: text(user.name),
     org: text(user.organization),
     role: user.role.toLowerCase() as Account['role'],
     status: admin?.deleted_at ? '회수' : '발급',
@@ -203,24 +212,11 @@ export function resourceCounts(summary: C.ResourceSummary | null) {
   return output;
 }
 
-// Semantic mapping only. API S5 means personnel safety, NOT the old UI's S5
-// facility protection. Broad/combined items are not split into invented advice.
-export const UI_TO_API_ITEM: Record<string, C.ItemCode | null> = {
-  S1: 'S1',
-  S2: 'S2',
-  S3: 'S3',
-  S4: 'S4',
-  S5: null,
-  S6: 'S6',
-  S7: 'S5',
-  E1: 'E1',
-  E2: 'E2',
-  E3: 'E3',
-  E4: 'E4',
-  E5: null,
-  E6: 'E5',
-  E7: null,
-};
+// HTTP proposal cards use the API's twelve codes directly. The separate legacy
+// demo catalogue is never used to fabricate missing HTTP response items.
+export const UI_TO_API_ITEM = Object.fromEntries(
+  PROPOSAL_CODES.map(code => [code, code]),
+) as Record<string, C.ItemCode | undefined>;
 const categories: Record<C.ItemCategory, string> = {
   IMMEDIATE: '즉시',
   STANDBY: '대기',
@@ -245,75 +241,66 @@ export function proposalView(
   seq = 1,
 ): ScreenRun {
   const evidence = scenario.evidence as unknown as Record<string, EvidenceView>;
-  const blocks: ScreenBlock[] = scenario.catalog.map((slot) => {
-    const apiCode = UI_TO_API_ITEM[slot.id],
-      item = raw?.items.find((i) => i.item_code === apiCode);
-    const base = {
-      id: slot.id,
-      axis: slot.axis,
-      name: slot.name,
-      authority: NULL_TEXT,
-      targets: [NULL_TEXT],
-      conflicts: [],
-      withheld: [],
-    } as const;
-    if (!item)
+  const blocks: ScreenBlock[] = (raw?.items ?? []).slice()
+    .sort((a, b) => PROPOSAL_CODES.indexOf(a.item_code) - PROPOSAL_CODES.indexOf(b.item_code))
+    .map((item) => {
+      const base = {
+        id: item.item_code,
+        axis: item.axis === 'SUPPRESSION' ? '진화' : '대피',
+        name: item.name,
+        authority: NULL_TEXT,
+        targets: [NULL_TEXT],
+        conflicts: [],
+        withheld: [],
+      } as const;
+      const refs = item.evidence.map((ev, index) => {
+        const key = `api:${raw!.id}:${item.item_code}:${ev.chunk_id}`;
+        evidence[key] = {
+          doc: text(ev.doc_name),
+          page: ev.page == null ? NULL_TEXT : String(ev.page),
+          section: text(ev.section),
+          text: text(ev.text),
+        };
+        return { k: index + 1, key, chunk: ev.chunk_id };
+      });
+      const paragraphs = item.sections.flatMap((section) =>
+        section.blocks.flatMap((block) => {
+          if (block.type === 'paragraph') {
+            const citations = block.evidence
+              .map((chunk) => refs.find((r) => r.chunk === chunk)?.k)
+              .filter((k) => k !== undefined);
+            return [block.body + citations.map((k) => `[${k}]`).join('')];
+          }
+          if (block.type === 'table')
+            return [
+              block.head.join(' · '),
+              ...block.rows.map((row) => row.join(' · ')),
+            ];
+          if (block.type === 'list') return block.rows.map((row) => row.text);
+          return [block.text];
+        }),
+      );
       return {
         ...base,
         targets: [NULL_TEXT],
         conflicts: [],
-        withheld: [],
-        apiMissing: true,
-        status: [NULL_TEXT],
-        text: NULL_TEXT,
-        finding: NULL_TEXT,
-        evidence: [],
+        apiItemCode: item.item_code,
+        apiSections: item.sections,
+        apiChunks: Object.fromEntries(refs.map(ref => [ref.chunk, ref.k])),
+        withheld: (item.withheld ?? []).map(value => ({ slot: value.field, why: value.reason })),
+        apiState: item.state,
+        apiMissing: item.state === 'FAILED',
+        status:
+          item.state === 'NOT_TRIGGERED'
+            ? ['(없음)']
+            : item.categories.length
+              ? item.categories.map((c) => categories[c])
+              : [NULL_TEXT],
+        text: paragraphs.join('\n'),
+        finding: item.finding,
+        evidence: refs.map(({ k, key }) => ({ k, key })),
       };
-    const refs = item.evidence.map((ev, index) => {
-      const key = `api:${raw!.id}:${slot.id}:${ev.chunk_id}`;
-      evidence[key] = {
-        doc: text(ev.doc_name),
-        page: ev.page == null ? NULL_TEXT : String(ev.page),
-        section: text(ev.section),
-        text: text(ev.text),
-      };
-      return { k: index + 1, key, chunk: ev.chunk_id };
     });
-    const paragraphs = item.sections.flatMap((section) =>
-      section.blocks.flatMap((block) => {
-        if (block.type === 'paragraph') {
-          const citations = block.evidence
-            .map((chunk) => refs.find((r) => r.chunk === chunk)?.k)
-            .filter((k) => k !== undefined);
-          return [block.body + citations.map((k) => `[${k}]`).join('')];
-        }
-        if (block.type === 'table')
-          return [
-            block.head.join(' · '),
-            ...block.rows.map((row) => row.join(' · ')),
-          ];
-        if (block.type === 'list') return block.rows.map((row) => row.text);
-        return [block.text];
-      }),
-    );
-    return {
-      ...base,
-      targets: [NULL_TEXT],
-      conflicts: [],
-      apiItemCode: item.item_code,
-      withheld: (item.withheld ?? []).map(value => ({ slot: value.field, why: value.reason })),
-      apiMissing: item.state === 'FAILED',
-      status:
-        item.state === 'NOT_TRIGGERED'
-          ? ['(없음)']
-          : item.categories.length
-            ? item.categories.map((c) => categories[c])
-            : [NULL_TEXT],
-      text: paragraphs.join('\n') || NULL_TEXT,
-      finding: text(item.finding),
-      evidence: refs.map(({ k, key }) => ({ k, key })),
-    };
-  });
   const summary = Object.fromEntries(
     Object.values(categories).map((category) => [
       category,
@@ -360,12 +347,11 @@ export function proposalView(
       stageDrivers: [],
     } as RulesResult,
     changed: blocks
-      .filter(
-        (b) =>
-          raw?.items.find((i) => i.item_code === b.apiItemCode)?.change_type ===
-          'CHANGED',
-      )
-      .map((b) => b.id),
+      .filter(b => {
+        const change = raw?.items.find(i => i.item_code === b.apiItemCode)?.change_type;
+        return change === 'CHANGED' || change === 'NEW';
+      })
+      .map(b => b.id),
   };
 }
 export function versionView(
@@ -418,14 +404,7 @@ const SCREEN_VAR_KEY: Record<string, string> = {
   vulnerable_population: 'vuln',
   fire_station_distance: 'fire_st',
 };
-/** 서버 계산 단위가 시나리오(목업, 단위 없음)와 다르거나 시나리오에 없는 변수. 서버 risk/criteria.py 기준 */
-const SERVER_UNITS: Record<string, string> = {
-  curvature: '1/100 m',
-  topographic_position: 'm',
-  terrain_complexity: 'm',
-  fire_area: 'ha',
-  houses_nearby: '동',
-};
+// Numeric server units are preserved in risk-units.ts; strings keep their original text.
 const apiAxis = (key: string) => (key === 'infra' ? 'infrastructure' : key);
 const screenAxis = (key: string) => (key === 'infrastructure' ? 'infra' : key);
 
@@ -451,9 +430,10 @@ export function riskView(raw: C.Risk | null, scenario: Scenario): RiskResult {
         key: f.code,
         axis: screenAxis(f.axis),
         name: f.name,
-        unit: SERVER_UNITS[f.code] ?? meta?.unit ?? NULL_TEXT,
+        unit: riskUnit(f.code, f.raw_value),
+        reason: f.reason, source: f.source, valueAt: f.value_at, included: f.included,
         w: f.weight,
-        mode: meta?.mode ?? '',
+        mode: f.code === 'aspect' && typeof f.raw_value !== 'number' ? '' : meta?.mode ?? '',
         value: f.raw_value,
         grade: f.grade,
         wn: f.included ? (den > 0 ? f.weight / den : null) : 0,

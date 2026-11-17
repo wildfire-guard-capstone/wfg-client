@@ -1,3 +1,4 @@
+import { validateResourceSummary, validateResourceList, validateResourceBases } from './screen/resources.ts';
 import type { ApiClient } from './client.ts';
 import type { Incident, Id, Operation, Page, UserRole, MapFeatures, AdminArea } from './contracts.ts';
 import type { RequestFor, LogQuery } from './endpoints.ts';
@@ -5,7 +6,7 @@ import { validateEvents } from './screen/events.ts';
 import { createIdempotencyKey } from './client.ts';
 import { createApiServices } from './services.ts';
 import { waitForOperation, validateOperation } from './operations.ts';
-import { validatePrediction, validateSlices, validateRisk } from './screen/predictions.ts';
+import { validatePrediction, validateSlices, validateRisk, validateWeatherNow, matchPredictionSlices } from './screen/predictions.ts';
 import { validateProposal } from './screen/proposals.ts';
 import { validateQa } from './screen/assistant.ts';
 import type { IncidentDirectory } from './screen/incidents.ts';
@@ -30,6 +31,7 @@ export async function allPages<T>(
   let cursor: string | undefined;
   for (let n = 0; n < 100; n++) {
     const page = await load(cursor);
+    if (!page || !Array.isArray(page.items) || typeof page.has_more !== 'boolean') throw new Error('페이지 응답의 items·has_more 필드를 확인해주세요.');
     items.push(...page.items);
     if (!page.has_more) return items;
     if (!page.next_cursor || seen.has(page.next_cursor))
@@ -134,7 +136,7 @@ export function createApiDataSource(client: ApiClient) {
     };
     const reader = role === 'COMMANDER' || role === 'VIEWER';
     const skipped = Promise.resolve({ status: 'not-requested' } as const);
-    const [perimeters, prediction, slices, weather, now, risk, proposal] =
+    let [perimeters, prediction, slices, weather, now, risk, proposal] =
       await Promise.all([
         remote(() =>
           allPages((cursor) =>
@@ -158,7 +160,7 @@ export function createApiDataSource(client: ApiClient) {
               api.predictions.weather({ path: predictionPath, signal }),
             )
           : skipped,
-        reader ? remote(() => api.weather.now({ path, signal })) : skipped,
+        reader ? remote(async () => validateWeatherNow(await api.weather.now({ path, signal }))) : skipped,
         reader && predictionPath.prediction_id
           ? remote(async () => validateRisk(await api.risk.get({ path: predictionPath, signal }), predictionPath.prediction_id))
           : skipped,
@@ -166,6 +168,9 @@ export function createApiDataSource(client: ApiClient) {
           ? remote(async () => resultProposalId ? validateProposal(await api.proposals.get({ path: { ...path, proposal_id: resultProposalId }, signal }), resultProposalId) : validateProposal(await api.proposals.latest({ path, signal })))
           : skipped,
       ]);
+    if (prediction.status === 'ready' && slices.status === 'ready') {
+      try { matchPredictionSlices(prediction.data, slices.data); } catch (error) { slices = {status:'error',error}; }
+    }
     signal?.throwIfAborted();
     return {
       incident,
@@ -181,22 +186,22 @@ export function createApiDataSource(client: ApiClient) {
   async function resources(incidentId?: Id, signal?: AbortSignal) {
     const query = incidentId ? { incident_id: incidentId } : {};
     const [list, summary, bases] = await Promise.all([
-      remote(() =>
-        allPages((cursor) =>
+      remote(async () =>
+        validateResourceList(await allPages((cursor) =>
           api.resources.list({
             query: { ...query, cursor, limit: 100 },
             signal,
           }),
-        ),
+        )),
       ),
-      remote(() => api.resources.summary({ query, signal })),
-      remote(() =>
-        allPages((cursor) =>
+      remote(async () => validateResourceSummary(await api.resources.summary({ query, signal }))),
+      remote(async () =>
+        validateResourceBases(await allPages((cursor) =>
           api.resources.bases({
             query: { ...query, cursor, limit: 100 },
             signal,
           }),
-        ),
+        )),
       ),
     ]);
     signal?.throwIfAborted();
@@ -247,7 +252,7 @@ export function createApiDataSource(client: ApiClient) {
           const layer = layers[index++];
           if (!layer) break;
           if (!layer.available) {
-            collections.set(layer.id, { status: 'error', error: new Error(`[필요한 정보: ${layer.name} 레이어 적재 데이터]`) });
+            collections.set(layer.id, { status: 'not-requested' });
             continue;
           }
           collections.set(layer.id, await remote(async () => {

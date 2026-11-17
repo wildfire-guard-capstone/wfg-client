@@ -18,31 +18,16 @@ import {
   incidentView,
 } from '../src/api/screen/adapters.ts';
 
-test('original 14 category names stay intact; API S5 maps to UI S7, ambiguous slots stay NULL', () => {
-  const S = createScenario(),
-    proposal = createFixtures()['PROP-03'];
-  proposal.items.forEach((item) => {
-    item.state = 'GENERATED';
-    item.categories = ['IMMEDIATE'];
-  });
+test('HTTP cards use all twelve API codes and server names without legacy placeholder slots', () => {
+  const S = createScenario(), proposal = createFixtures()['PROP-03'];
+  proposal.items.forEach(item => { item.state = 'GENERATED'; item.categories = ['IMMEDIATE']; });
   const run = proposalView(proposal, S, null);
-  assert.deepEqual(
-    run.blocks.map((b) => [b.id, b.name, b.axis]),
-    S.catalog.map((b) => [b.id, b.name, b.axis]),
-  );
-  assert.equal(run.blocks.length, 14);
-  assert.equal(run.blocks.find((b) => b.id === 'S7').apiItemCode, 'S5');
-  for (const id of ['S5', 'E5', 'E7']) {
-    const block = run.blocks.find((b) => b.id === id);
-    assert.equal(block.text, NULL_TEXT);
-    assert.equal(block.apiMissing, true);
-  }
-  assert.equal(run.summary.즉시, 11);
-  assert.ok(
-    run.blocks.every(
-      (b) => b.authority === NULL_TEXT && b.targets[0] === NULL_TEXT,
-    ),
-  );
+  assert.deepEqual(run.blocks.map(b => [b.id, b.name, b.axis]), proposal.items.map(i => [i.item_code, i.name, i.axis === 'SUPPRESSION' ? '진화' : '대피']));
+  assert.equal(run.blocks.length, 12);
+  assert.equal(run.summary.즉시, 12);
+  assert.equal(run.blocks.find(b => b.id === 'E6').apiItemCode, 'E6');
+  assert.ok(run.blocks.every(b => !b.apiMissing && b.authority === NULL_TEXT && b.targets[0] === NULL_TEXT));
+  assert.deepEqual(proposalView(null, S, null).blocks, []);
 });
 test('full MultiPolygon, every interior ring and exact area survive display and resubmission', () => {
   const geometry = {

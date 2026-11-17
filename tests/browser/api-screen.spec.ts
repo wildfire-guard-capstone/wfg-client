@@ -64,13 +64,13 @@ async function predict(page: Page) {
   await expect(page.locator('#btn-predict')).toBeEnabled();
 }
 
-test('HTTP responses drive original map, large risk badge, 14 proposal slots and AI chat', async ({
+test('HTTP responses drive original map, large risk badge, 12 proposal slots and AI chat', async ({
   page,
 }) => {
   const { calls, errors } = await server(page);
   await login(page);
   await expect(page.locator('#st-detail')).toContainText('공식 단계');
-  await expect(page.locator('#st-detail')).toContainText('[NULL]');
+  await expect(page.locator('#st-detail')).toContainText('정보 미제공');
   await predict(page);
   await expect(page.locator('#risk-box')).toHaveText('3.20');
   const box = await page.locator('#risk-box').boundingBox();
@@ -78,26 +78,20 @@ test('HTTP responses drive original map, large risk badge, 14 proposal slots and
   expect(box?.height).toBe(64);
   await page.locator('#risk-box').click();
   await expect(page.locator('#risk-pop-body .rk-fac tbody tr')).toHaveCount(4);
-  await expect(page.locator('#risk-pop-body')).toContainText('[NULL]');
+  await expect(page.locator('#risk-pop-body')).toContainText('정보 미제공');
   await page.locator('#btn-risk-vars').click();
   await expect(page.locator('#modal table.rv tbody tr:not(.grp)')).toHaveCount(
     23,
   );
   await page.locator('#modal-actions button').click();
   await page.locator('.ip-tab[data-tab="proposal"]').click();
-  await expect(page.locator('#cards .card[data-id="S5"] .text')).toHaveText(
-    '[NULL]',
-  );
-  expect(
-    await page.evaluate(() => window.__mock.IS().viewRun.blocks.length),
-  ).toBe(14);
+  await expect(page.locator('#cards .card')).toHaveCount(6);
+  expect(await page.evaluate(() => window.__mock.IS().viewRun.blocks.length)).toBe(12);
+  await expect(page.locator('#prop-summary')).toContainText('진화 6항목');
   await page.locator('.ptab[data-axis="대피"]').click();
-  await expect(page.locator('#cards .card[data-id="E5"] .text')).toHaveText(
-    '[NULL]',
-  );
-  await expect(page.locator('#cards .card[data-id="E7"] .text')).toHaveText(
-    '[NULL]',
-  );
+  await expect(page.locator('#cards .card')).toHaveCount(6);
+  await expect(page.locator('#cards .card[data-id="E6"] .st')).toContainText('미발동');
+  await expect(page.locator('#cards .card[data-id="E7"]')).toHaveCount(0);
   await page.locator('#chat-fab').click();
   await page.locator('#chat-input').fill('현재 위험도');
   await page.locator('#btn-chat-send').click();
@@ -115,7 +109,7 @@ test('HTTP responses drive original map, large risk badge, 14 proposal slots and
   expect(errors).toEqual([]);
 });
 
-test('empty risk/proposal and failed resource summary keep the original UI with NULL values', async ({
+test('empty risk/proposal and failed resource summary keep readable distinct data states', async ({
   page,
 }) => {
   const { errors } = await server(page, {
@@ -127,15 +121,16 @@ test('empty risk/proposal and failed resource summary keep the original UI with 
   });
   await login(page);
   await predict(page);
-  await expect(page.locator('#risk-box')).toHaveText('[NULL]');
+  await expect(page.locator('#risk-box')).toHaveText('정보 미제공');
   await page.locator('#risk-box').click();
   await expect(page.locator('#risk-pop-body .rk-fac tbody tr')).toHaveCount(4);
   await expect(page.locator('#risk-pop-body .rk-track i')).toBeHidden();
   await expect(page.locator('#risk-pop-body')).not.toContainText('빼고 계산했습니다');
   await page.locator('.ip-tab[data-tab="proposal"]').click();
-  await expect(page.locator('#cards .card')).toHaveCount(7);
+  await expect(page.locator('#cards .card')).toHaveCount(0);
+  await expect(page.locator('#cards')).toContainText('대응 제안 데이터 없음');
   await page.locator('#btn-resources').click();
-  await expect(page.locator('#lp-body')).toContainText('[NULL]');
+  await expect(page.locator('#lp-body')).toContainText('조회 실패');
   expect(
     await page
       .locator('#risk-box')
@@ -149,7 +144,7 @@ test('empty incident list does not invent coordinates or a fire; controls and pa
 }) => {
   const { errors } = await server(page, { 'INC-01': 'empty' });
   await login(page);
-  await expect(page.locator('#ip-name')).toHaveText('[NULL]');
+  await expect(page.locator('#ip-name')).toHaveText('정보 미제공');
   await expect(page.locator('#btn-predict')).toBeDisabled();
   await expect(page.locator('#st-detail')).not.toContainText('128.60226');
   expect(
@@ -166,7 +161,7 @@ test('reporter submits only contracted new-report fields; MultiPolygon and holes
   const { calls, errors } = await server(page);
   await login(page, 'reporter');
   await page.locator('#rep-new').click();
-  await expect(page.locator('#rep-name')).toHaveValue('[NULL]');
+  await expect(page.locator('#rep-name')).toHaveValue('정보 미제공');
   for (const [id, value] of Object.entries({
     'rep-addr': '경북 의성군 보고 시험',
     'rep-lng': '128.602',

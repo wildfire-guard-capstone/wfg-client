@@ -132,6 +132,7 @@ export const ReporterPanel = memo(function ReporterPanel() {
         </div>
         <div id="rep-poly-info">{'제출할 새 화선 없음'}</div>
         <div id="rep-perim-mode"></div>
+        <label className="p1-observed">{'화선 관측시각 (실제 측정 시각)'}<input id="rep-observed" type="datetime-local" /></label>
         <div className="btnrow" style={{ marginTop: '8px' }}>
           <button
             id="rep-save"
