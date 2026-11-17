@@ -186,6 +186,25 @@ export function createFixtures(): ResponseMap {
             {
               title: '목업 본문',
               blocks: [
+                // 네 단계 제안서(서버 2026-11-17): 상황 · 상태 · 판단 → 제안
+                {
+                  type: 'fact',
+                  step: 'situation',
+                  text: '화면 검증용 상황 문단입니다.',
+                  source: 'llm',
+                },
+                {
+                  type: 'fact',
+                  step: 'status',
+                  text: '화면 검증용 상태 문단입니다.',
+                  source: 'llm',
+                },
+                {
+                  type: 'fact',
+                  step: 'judgment',
+                  text: '화면 검증용 판단 문단입니다.',
+                  source: 'llm',
+                },
                 {
                   type: 'paragraph',
                   category: 'CONSULT',

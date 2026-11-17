@@ -65,12 +65,19 @@ export function validateProposal(
 
 function validSections(item: Proposal['items'][number]): boolean {
   const str = (v: unknown) => typeof v === 'string';
+  const data = (b: { type: string; rows?: unknown; head?: unknown }): boolean => {
+    if (b.type === 'list') return Array.isArray(b.rows) && b.rows.every(r=>r && str(r.text));
+    if (b.type === 'table') return Array.isArray(b.head) && b.head.every(str) && Array.isArray(b.rows) && b.rows.every(r=>Array.isArray(r) && r.every(str));
+    return false;
+  };
   return str(item.finding) && (item.withheld == null || Array.isArray(item.withheld) && item.withheld.every(w=>w && str(w.field) && str(w.reason))) &&
     item.evidence.every(e=>e && str(e.chunk_id)) && item.sections.every(s=>s && str(s.title) && Array.isArray(s.blocks) && s.blocks.every(b=>{
       if (!b) return false;
-      if (b.type === 'paragraph') return str(b.body) && Array.isArray(b.evidence) && b.evidence.every(str);
-      if (b.type === 'list') return Array.isArray(b.rows) && b.rows.every(r=>r && str(r.text));
-      if (b.type === 'table') return Array.isArray(b.head) && b.head.every(str) && Array.isArray(b.rows) && b.rows.every(r=>Array.isArray(r) && r.every(str));
+      // 제안 문단의 자세한 자료(details, 2026-11-18)는 목록 · 표만
+      if (b.type === 'paragraph') return str(b.body) && Array.isArray(b.evidence) && b.evidence.every(str) &&
+        (b.details == null || Array.isArray(b.details) && b.details.every(d=>d && data(d)));
+      if (b.type === 'fact') return str(b.text) && ['situation', 'status', 'judgment'].includes(b.step);
+      if (b.type === 'list' || b.type === 'table') return data(b);
       return (b.type === 'note' || b.type === 'failed') && str(b.text);
     }));
 }

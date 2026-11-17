@@ -411,9 +411,23 @@ export interface ParagraphBlock {
   action_text?: string;
   topic?: string | null;
   source?: string;
+  /** 그 제안의 자세한 자료(서버 2026-11-18): 규칙 엔진 목록 · 표. 화면은 문장 밑 「자세히 보기」 */
+  details?: DetailBlock[];
+}
+export type DetailBlock =
+  | { type: 'list'; style: string; rows: { text: string }[] }
+  | { type: 'table'; head: string[]; rows: string[][] };
+/** 상황 · 상태 · 판단 문단(서버 2026-11-17 네 단계, wfg-server PR #51). 제안(paragraph) 앞에 온다. */
+export type FactStep = 'situation' | 'status' | 'judgment';
+export interface FactBlock {
+  type: 'fact';
+  step: FactStep;
+  text: string;
+  source?: string;
 }
 export type ProposalBlock =
   | ParagraphBlock
+  | FactBlock
   | { type: 'list'; style: string; rows: { text: string }[] }
   | { type: 'table'; head: string[]; rows: string[][] }
   | { type: 'note'; text: string }

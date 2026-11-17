@@ -58,6 +58,123 @@
 .proposal-section p {
   margin: 4px 0;
 }
+/* 네 단계 제안서(2026-11-18): 「현황」(상황 · 상태 · 판단, 접힘) → 「제안」(펼침, 문장마다 구분 태그와
+   「자세히 보기」) → 남은 판정 자료 → 「빠진 정보」(접힘). 카드 안에 상자를 겹치지 않고 구분선으로만 나눈다 */
+.fold:not(.open) > .fold-body {
+  display: none;
+}
+.fold-toggle,
+.fold > .part-title {
+  display: block;
+  border: 0;
+  background: none;
+  padding: 0;
+  margin: 2px 0;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: #555;
+  cursor: pointer;
+  text-align: left;
+}
+.fold-toggle::before {
+  content: '▸';
+  display: inline-block;
+  width: 1.1em;
+  font-size: 11px;
+}
+.fold.open > .fold-toggle::before {
+  content: '▾';
+}
+.fold-toggle:hover,
+.fold-toggle:focus-visible {
+  color: var(--fg);
+}
+.proposal-facts > .fold-body {
+  color: #555;
+}
+.proposal-actions {
+  border-top: 1px solid var(--line);
+  margin-top: 6px;
+  padding-top: 4px;
+}
+.proposal-actions > .fold-toggle,
+.proposal-actions > .part-title {
+  color: var(--blue);
+}
+/* 제안 문장 밑 「자세히 보기」: 작게, 문장보다 들여서 */
+.prop-detail {
+  margin: -2px 0 6px 1.6em;
+}
+.prop-detail > .fold-toggle,
+.prop-detail > .part-title {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--gray);
+}
+.prop-detail > .fold-body {
+  font-size: 12.5px;
+}
+/* 남은 판정 자료(목록 · 표): 구분선 다음에 작은 회색 소제목으로 */
+.proposal-section + .proposal-section {
+  border-top: 1px solid var(--line);
+  margin-top: 8px;
+  padding-top: 4px;
+}
+.proposal-section + .proposal-section .section-title {
+  font-size: 12px;
+  color: #555;
+}
+.proposal-section ol.list-plain,
+.prop-detail ol.list-plain {
+  list-style: none;
+  padding-left: 0;
+}
+.proposal-section li,
+.proposal-missing li {
+  margin: 2px 0;
+}
+.proposal-note p {
+  font-size: 11.5px;
+  color: var(--gray);
+  margin: 4px 0;
+}
+/* API 제안서 카드: 머리(▶)를 누르면 카드 전체가 접힌다(처음엔 펼침), 본문을 눌러도 접히지 않는다 */
+.card.api:not(.open) > .sum {
+  display: none;
+}
+.card.api > .sum {
+  cursor: default;
+}
+/* 「판정 이유 · 근거」(카드 안 접기)와 「빠진 정보」(맨 아래, ※ 안내 + 판단하지 않은 것): 처음엔 접힘 */
+.card-basis,
+.proposal-missing {
+  border-top: 1px solid var(--line);
+  margin-top: 8px;
+  padding-top: 4px;
+}
+.card-basis > .fold-toggle,
+.proposal-missing > .fold-toggle {
+  font-weight: 400;
+  color: var(--gray);
+}
+.card-basis > .fold-body {
+  font-size: 12.5px;
+}
+.proposal-missing > .fold-body {
+  font-size: 11.5px;
+  color: var(--gray);
+}
+.proposal-missing ul {
+  padding-left: 16px;
+  margin: 2px 0;
+}
+.prop-cat {
+  font-size: 10.5px;
+  padding: 0 4px;
+  margin-right: 2px;
+  vertical-align: 1px;
+}
 .proposal-section ul,
 .proposal-section ol {
   padding-left: 20px;
