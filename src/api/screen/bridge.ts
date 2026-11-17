@@ -1,3 +1,4 @@
+import { remoteState, stateText, observedAt, canCorrectPerimeter } from './presentation.ts';
 import type * as C from '../contracts.ts';
 import type { ApiDataSource, IncidentData } from '../data-source.ts';
 import type {
@@ -80,6 +81,8 @@ export function createScreenBridge(
   const snapshot = new Map<string, IncidentData>();
   const versions = new Map<string, C.ProposalVersion[]>();
   const predictionOperations = new Map<string, C.Operation>();
+  const reportRefreshNeeded = new Map<string, number>();
+  let pendingCreatedReport: { id: string; selected: number; form: AppState['rep'] } | null = null;
   const rawUsers = new Map<string, C.AdminUser>();
   const userChanges = new Set<string>();
   let userTicket = 0;
@@ -92,6 +95,9 @@ export function createScreenBridge(
   const baseChanges = new Set<string>();
   let resourceTicket = 0;
   let resourceContext: string | undefined;
+  let resourceSnapshot: Awaited<ReturnType<ApiDataSource['resources']>> | undefined;
+  const resourceKnown = new Set<string>();
+  let retainedResourceParts: string[] = [];
   let proposalTicket = 0;
   let chatTicket = 0;
   const requests = new Set<AbortController>();
@@ -114,6 +120,7 @@ export function createScreenBridge(
   const savedConfirmations = new Set<string>();
   const regenerating = new Set<string>();
   let counts = resourceCounts(null);
+  const weatherCache = new Map<string,C.WeatherNow>();
   let currentWeather: C.WeatherNow | null = null;
   let currentUser: C.User | null = null;
   const missingRing = displayRing({ type: 'MultiPolygon', coordinates: [] });
@@ -150,6 +157,9 @@ export function createScreenBridge(
     chatTicket++;
     resourceTicket++;
     resourceContext = undefined;
+    resourceSnapshot = undefined;
+    resourceKnown.clear();
+    retainedResourceParts = [];
     rawResources.clear();
     resourceBases.clear();
     resourceChanges.clear();
@@ -165,6 +175,8 @@ export function createScreenBridge(
     listStatus = 'not-requested';
     listError = undefined;
     raw.clear();
+    reportRefreshNeeded.clear();
+    pendingCreatedReport = null;
     snapshot.clear();
     versions.clear();
     predictionOperations.clear();
@@ -173,6 +185,7 @@ export function createScreenBridge(
     regenerating.clear();
     errors.clear();
     currentWeather = null;
+    weatherCache.clear();
     counts = resourceCounts(null);
     currentUser = null;
     clearTimeout(expiryTimer);
@@ -180,6 +193,7 @@ export function createScreenBridge(
     loading = false;
     host.loginBusy(false);
     chatting = false;
+    saving = false;
     host.busy(false);
     host.chatBusy(false);
   }
@@ -286,6 +300,9 @@ export function createScreenBridge(
     const context = incidentId ?? 'ADMIN';
     if (resourceContext !== context) {
       resourceContext = context;
+      resourceSnapshot = undefined;
+    resourceKnown.clear();
+    retainedResourceParts = [];
       S.resources = [];
       rawResources.clear();
       resourceBases.clear();
@@ -295,6 +312,9 @@ export function createScreenBridge(
     const result = await source.resources(incidentId, signal);
     if (!alive(epoch) || signal.aborted || ticket !== resourceTicket ||
         (incidentId !== undefined && state.incId !== incidentId)) return;
+    retainedResourceParts = Object.entries(result).filter(([key,value])=>value.status === 'error' && resourceKnown.has(key)).map(([key])=>key);
+    for (const [key,value] of Object.entries(result)) if (value.status === 'ready') resourceKnown.add(key);
+    resourceSnapshot = result;
     if (result.bases.status === 'ready') {
       resourceBases.clear();
       for (const row of result.bases.data) resourceBases.set(row.id, row);
@@ -373,9 +393,24 @@ export function createScreenBridge(
       if (alive(epoch)) baseChanges.delete(key);
     }
   }
-  function install(data: IncidentData) {
+  function assertSavedReportVersion(data: IncidentData) {
+    const savedVersion = reportRefreshNeeded.get(data.incident.id);
+    if (savedVersion !== undefined && data.incident.current_perimeter_version < savedVersion)
+      throw new Error('저장한 화선보다 오래된 조회 결과입니다. 해당 산불을 다시 조회해주세요.');
+  }
+  function install(data: IncidentData, foreground = true) {
+    assertSavedReportVersion(data);
+    if (data.now.status === 'ready') weatherCache.set(data.incident.id, data.now.data);
     raw.set(data.incident.id, data.incident);
     snapshot.set(data.incident.id, data);
+    const savedVersion = reportRefreshNeeded.get(data.incident.id);
+    if (savedVersion !== undefined && data.incident.current_perimeter_version >= savedVersion && data.perimeters.status === 'ready') {
+      reportRefreshNeeded.delete(data.incident.id);
+      if (pendingCreatedReport?.id === data.incident.id) pendingCreatedReport = null;
+    }
+    // A user may have returned to this incident through a newer selection request.
+    // Keep its current view/form intact while retaining the response in its cache.
+    if (!foreground && state.incId === data.incident.id) return;
     const old = S.incidents.findIndex((i) => i.id === data.incident.id);
     const view = incidentDetailsView(
       data.incident,
@@ -393,7 +428,7 @@ export function createScreenBridge(
       S,
     );
     st.riskStatus = data.risk.status === 'error' ? 'failed' : 'ready';
-    S.weather.fetch_status = data.now.status === 'error' ? 'failed' : 'ready';
+    if (foreground) S.weather.fetch_status = data.now.status === 'error' ? 'failed' : 'ready';
     st.predPerim = null;
     if (data.prediction.status === 'ready') {
       const p = data.prediction.data;
@@ -428,7 +463,7 @@ export function createScreenBridge(
         ? st.predPerim
         : null,
     );
-    st.currentRun = st.predicted || proposal ? run : null;
+    st.currentRun = proposal ? run : null;
     st.viewRun = st.currentRun;
     st.runs = proposal ? [run] : [];
     for (const [name, response] of Object.entries(data))
@@ -439,6 +474,7 @@ export function createScreenBridge(
         response.status === 'error'
       )
         errors.set(`${view.id}.${name}`, response.error);
+      else errors.delete(`${view.id}.${name}`);
   }
   async function histories(
     incidentId: string,
@@ -547,7 +583,7 @@ export function createScreenBridge(
       }
       state.incId = id;
       pendingIncident = null;
-      currentWeather = data.now.status === 'ready' ? data.now.data : null;
+      currentWeather = weatherCache.get(data.incident.id) ?? null;
       if (data.prediction.status === 'ready')
         host.baseAt(data.prediction.data.base_at);
       // Commit the selected identity and detail together before related panels load.
@@ -686,7 +722,7 @@ export function createScreenBridge(
             );
             if (!alive(epoch)) return;
             install(data);
-            currentWeather = data.now.status === 'ready' ? data.now.data : null;
+            currentWeather = weatherCache.get(data.incident.id) ?? null;
             if (data.prediction.status === 'ready')
               host.baseAt(data.prediction.data.base_at);
           }
@@ -1023,6 +1059,26 @@ export function createScreenBridge(
     if (saving || pendingIncident) return;
     const rp = state.rep,
       existing = rp.editingId ? raw.get(rp.editingId) : undefined;
+    if (currentUser?.role !== 'REPORTER' || state.role !== 'reporter') return;
+    if (rp.editingId && !existing) {
+      host.notice('보고할 산불을 다시 조회한 뒤 실측 화선을 제출해주세요.');
+      return;
+    }
+    const selected = selection;
+    const selectedId = state.incId;
+    const editingId = rp.editingId;
+    const saveEpoch = generation;
+    const current = () =>
+      selection === selected && state.incId === selectedId &&
+      state.rep === rp && state.rep.editingId === editingId && !pendingIncident;
+    const needsRefresh = existing
+      ? reportRefreshNeeded.has(existing.id)
+      : pendingCreatedReport?.selected === selected && pendingCreatedReport.form === rp;
+    if (needsRefresh) {
+      host.notice('보고는 이미 저장됐습니다. 해당 산불을 다시 조회한 뒤 새로운 보고를 제출해주세요.');
+      return;
+    }
+    if (existing && (existing.id !== state.incId || existing.status === 'ENDED')) return;
     if (rp.drawMode) {
       host.notice('그리기를 끝낸 뒤 저장하십시오.');
       return;
@@ -1032,6 +1088,7 @@ export function createScreenBridge(
     try {
       await task(async (signal, epoch) => {
         let id: string;
+        let savedPerimeter: C.Perimeter | undefined;
         if (existing) {
           if (!rp.ring) {
             host.notice(
@@ -1067,12 +1124,21 @@ export function createScreenBridge(
             );
             return;
           }
+          const savedRows = snapshot.get(existing.id)?.perimeters;
+          const knownPerimeters = savedRows?.status === 'ready' ? savedRows.data : [];
+          const target = knownPerimeters.find(p=>p.id===existing.current_perimeter_id);
+          const previous = rp.perimMode === 'correct'
+            ? knownPerimeters.filter(p=>p.version_no < existing.current_perimeter_version).sort((a,b)=>b.version_no-a.version_no)[0]
+            : target;
           const body = {
             geometry: submissionGeometry(rp.ring),
-            observed_at: new Date().toISOString(),
+            observed_at: observedAt(input('rep-observed'), previous?.observed_at),
           };
+          if (rp.perimMode === 'correct' && !canCorrectPerimeter(existing.current_perimeter_version, target?.geometry.type ?? 'Point')) {
+            throw new Error('v0 발화점 화선은 정정할 수 없습니다. 새 버전으로 보고해주세요.');
+          }
           if (rp.perimMode === 'correct')
-            await source.api.perimeters.correct({
+            savedPerimeter = await source.api.perimeters.correct({
               path: {
                 incident_id: existing.id,
                 perimeter_id: existing.current_perimeter_id,
@@ -1082,7 +1148,7 @@ export function createScreenBridge(
               signal,
             });
           else
-            await source.api.perimeters.report({
+            savedPerimeter = await source.api.perimeters.report({
               path: { incident_id: existing.id },
               body: {
                 ...body,
@@ -1092,6 +1158,19 @@ export function createScreenBridge(
               signal,
             });
           id = existing.id;
+          if (!alive(epoch)) return;
+          if (savedPerimeter.incident_id !== id) throw new Error('[필요한 정보: 보고 대상과 일치하는 화선 저장 응답]');
+          // Preserve only confirmed wire facts if the subsequent read fails.
+          const cached = raw.get(id)!;
+          if (savedPerimeter.version_no >= cached.current_perimeter_version) {
+            const updated = { ...cached, current_perimeter_id: savedPerimeter.id, current_perimeter_version: savedPerimeter.version_no };
+            raw.set(id, updated);
+            reportRefreshNeeded.set(id, savedPerimeter.version_no);
+            const known = snapshot.get(id)?.perimeters;
+            const rows = known?.status === 'ready' ? known.data : [];
+            const index = S.incidents.findIndex(i => i.id === id);
+            if (index >= 0) S.incidents[index] = incidentDetailsView(updated, [...rows.filter(p => p.id !== savedPerimeter!.id), savedPerimeter]);
+          }
         } else {
           if (rp.intake.length)
             throw new Error(
@@ -1135,7 +1214,7 @@ export function createScreenBridge(
                 ? {
                     initial_perimeter: {
                       geometry: submissionGeometry(rp.ring),
-                      observed_at: new Date().toISOString(),
+                      observed_at: observedAt(input('rep-observed')),
                     },
                   }
                 : {}),
@@ -1143,28 +1222,47 @@ export function createScreenBridge(
             idempotencyKey: createIdempotencyKey(),
             signal,
           });
+          if (!alive(epoch)) return;
           incidentSummaries.set(response.id, response);
+          raw.set(response.id, response);
+          const index = S.incidents.findIndex(i => i.id === response.id);
+          const view = incidentDetailsView(response, []);
+          if (index < 0) S.incidents.push(view);
+          else S.incidents[index] = view;
+          reportRefreshNeeded.set(response.id, response.current_perimeter_version);
+          pendingCreatedReport = { id: response.id, selected, form: rp };
           id = response.id;
         }
         if (!alive(epoch)) return;
-        const data = await source.loadIncident(
-          id,
-          roleToApi(state.role!),
-          signal,
-        );
+        let data: IncidentData;
+        try {
+          data = await source.loadIncident(id, 'REPORTER', signal);
+          if (data.perimeters.status === 'error') throw data.perimeters.error;
+          assertSavedReportVersion(data);
+        } catch (cause) {
+          if (alive(epoch)) {
+            errors.set(`${id}.report.refresh`, cause);
+            host.notice(`산불 ${id}의 보고는 저장됐지만 후속 조회에 실패했습니다. 다시 제출하지 말고 해당 산불을 재조회해주세요. ${error(cause)}`);
+          }
+          return;
+        }
         if (!alive(epoch)) return;
-        install(data);
-        state.incId = id;
-        host.selected(id);
-        host.reportForm(id);
-        host.notice(
-          '서버 응답으로 보고 내용을 갱신했습니다. 산불명은 서버가 생성하며 접수 기록은 전송하지 않습니다.',
-        );
+        errors.delete(`${id}.report.refresh`);
+        const foreground = current();
+        install(data, foreground);
+        if (foreground) {
+          state.incId = id;
+          host.selected(id);
+          host.reportForm(id);
+          host.notice('서버 응답으로 보고 내용을 갱신했습니다. 산불명은 서버가 생성하며 접수 기록은 전송하지 않습니다.');
+        } else host.notice(`산불 ${id}의 보고가 저장됐습니다. 현재 선택과 입력 내용은 유지했습니다.`);
       });
     } finally {
-      saving = false;
-      (document.getElementById('rep-save') as HTMLButtonElement).disabled =
-        !!raw.get(state.rep.editingId ?? '')?.ended_at;
+      if (alive(saveEpoch)) {
+        saving = false;
+        const button = document.getElementById('rep-save') as HTMLButtonElement | null;
+        if (button) button.disabled = !!raw.get(state.rep.editingId ?? '')?.ended_at;
+      }
     }
   }
   function bindLogs() {
@@ -1270,6 +1368,26 @@ export function createScreenBridge(
     changeResource,
     changeBase,
     changeUser,
+    dataState: (key: 'now' | 'weather' | 'risk' | 'proposal' | 'prediction' | 'slices' | 'perimeters') => {
+      const data = snapshot.get(state.incId);
+      const response = data?.[key];
+      if (!pendingIncident && !loading && key === 'risk' && data?.risk.status === 'ready' && data.risk.data?.status === 'UNAVAILABLE') return 'absent' as const;
+      if (!pendingIncident && !loading && key === 'slices' && data?.slices.status === 'ready' && data.slices.data.features.length === 0) return 'absent' as const;
+      const partial = key === 'now' && data?.now.status === 'ready' && (['wind_speed','temp','humidity','precip'] as const).some(k=>(data.now as {status:'ready';data:C.WeatherNow}).data[k] == null) || key === 'risk' && data?.risk.status === 'ready' && data.risk.data?.status === 'PARTIAL' ||
+        key === 'prediction' && data?.prediction.status === 'ready' && data.prediction.data.slices.length < 8 ||
+        key === 'slices' && data?.slices.status === 'ready' && data.slices.data.features.length > 0 && data.slices.data.features.length < 8;
+      return remoteState(response, {loading:!!pendingIncident || loading, partial:!!partial, generated: key === 'proposal' ? !!data?.incident.latest_proposal_id : ['risk','prediction','slices','weather'].includes(key) ? !!data?.incident.latest_prediction_id : undefined});
+    },
+    resourceState: () => ({
+      loading: S.resources_fetch_status === 'loading',
+      parts: resourceSnapshot ? Object.fromEntries(Object.entries(resourceSnapshot).map(([key,value])=>[key,remoteState(value)])) : {},
+      retained: retainedResourceParts.length > 0,
+      retainedParts: [...retainedResourceParts],
+    }),
+    predictionArea: (hour: number) => {
+      const slices = snapshot.get(state.incId)?.slices;
+      return slices?.status === 'ready' ? slices.data.features.find(f=>f.properties.hour===hour)?.properties.area_ha ?? null : null;
+    },
     counts: () => counts,
     incidentRows: () =>
       [...incidentSummaries.values()].map((row) =>

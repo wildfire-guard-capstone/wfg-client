@@ -1,3 +1,4 @@
+import { ApiError } from '../errors.ts';
 import type { Resource, ResourceBase, ResourceCreateRequest, ResourceUpdateRequest } from '../contracts.ts';
 
 export interface ResourceForm { type: string; name: string; base: string; qty: number; status: string }
@@ -23,4 +24,24 @@ export function resourceRequest(form: ResourceForm, bases: ResourceBase[], curre
   if (status !== current.status) body.status = status;
   if (!Object.keys(body).length) throw new Error('변경된 자원 정보가 없습니다.');
   return body;
+}
+
+/** Required numeric aggregates must fail as a protocol error, never sum undefined into NaN. */
+export function validateResourceSummary(value: import('../contracts.ts').ResourceSummary) {
+  const count = (n: unknown) => typeof n === 'number' && Number.isFinite(n) && n >= 0;
+  if (!value || !Array.isArray(value.bases) || value.bases.some(b=>!b || !['HELICOPTER','VEHICLE'].includes(b.kind) || ![b.total,b.available,b.deployed,b.maintenance].every(count)) ||
+    value.incident_deployed != null && (['helicopter','vehicle','crew'] as const).some(key=>{const g=value.incident_deployed![key];return g != null && !count(g.total);})) {
+    throw new ApiError({endpoint:'RES-02',kind:'protocol',code:'INVALID_RESPONSE',message:'[필요한 정보: 자원 집계의 실제 보유·대기·투입·정비 수량]'});
+  }
+  return value;
+}
+export function validateResourceList(value: Resource[]) {
+  if (!Array.isArray(value) || value.some(r=>!r || typeof r.id!=='string' || typeof r.name!=='string' || typeof r.base_id!=='string' || !['HELICOPTER','VEHICLE'].includes(r.kind) || !['AVAILABLE','DEPLOYED','MAINTENANCE'].includes(r.status)))
+    throw new ApiError({endpoint:'RES-01',kind:'protocol',code:'INVALID_RESPONSE',message:'[필요한 정보: 자원 ID·명칭·기지·종류·상태]'});
+  return value;
+}
+export function validateResourceBases(value: ResourceBase[]) {
+  if (!Array.isArray(value) || value.some(b=>!b || typeof b.id!=='string' || typeof b.name!=='string'))
+    throw new ApiError({endpoint:'BASE-01',kind:'protocol',code:'INVALID_RESPONSE',message:'[필요한 정보: 기지 ID·명칭]'});
+  return value;
 }

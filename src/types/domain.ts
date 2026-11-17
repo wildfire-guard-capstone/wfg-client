@@ -90,6 +90,9 @@ export interface ProposalBlock {
   /** API data mapping only; original card layout stays unchanged. */
   apiMissing?: boolean;
   apiItemCode?: string;
+  apiSections?: import('../api/contracts').ProposalSection[];
+  apiChunks?: Record<string,number>;
+  apiState?: import('../api/contracts').ProposalItem['state'];
   id: string;
   axis: string;
   name: string;
@@ -131,6 +134,10 @@ export interface RiskResult {
     value: string | number | null;
     grade: number | null;
     wn: number | null;
+    reason?: string | null;
+    source?: string | null;
+    valueAt?: string | null;
+    included?: boolean;
   })[];
   factors: {
     key: string;

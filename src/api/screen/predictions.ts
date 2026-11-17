@@ -7,7 +7,7 @@ const invalid = (endpoint: ApiId, field: string): never => {
 const at = (value: string) => Number.isFinite(Date.parse(value));
 export function validatePrediction(value: C.Prediction, incidentId: string, predictionId: string) {
   if (!value || value.id !== predictionId || value.incident_id !== incidentId || !at(value.base_at)) invalid('PRED-02', '선택한 산불·예측 ID와 예측 기준 시각');
-  if (!Array.isArray(value.slices) || value.slices.some(s => !Number.isInteger(s.hour) || s.hour < 1 || s.hour > 8 || !at(s.at)) || new Set(value.slices.map(s => s.hour)).size !== value.slices.length) invalid('PRED-02', '예측 P1~P8의 유효한 시간');
+  if (!Array.isArray(value.slices) || value.slices.some(s => !Number.isInteger(s.hour) || s.hour < 1 || s.hour > 8 || !at(s.at) || !Number.isFinite(s.area_ha) || s.area_ha < 0) || new Set(value.slices.map(s => s.hour)).size !== value.slices.length) invalid('PRED-02', '예측 P1~P8의 유효한 시간');
   return value;
 }
 export function validateSlices(value: C.PredictionSlices, predictionId: string) {
@@ -25,6 +25,17 @@ export function validateSlices(value: C.PredictionSlices, predictionId: string) 
   return value;
 }
 export function validateRisk(value: C.Risk | null, predictionId: string) {
-  if (value && (value.prediction_id !== predictionId || !['READY', 'PARTIAL', 'UNAVAILABLE'].includes(value.status))) invalid('RISK-01', '선택한 예측 ID와 위험도 상태');
+  if (value && (!Array.isArray(value.factors) || !value.axes || [value.score,value.hazard,value.exposure].some(v=>v!=null && !Number.isFinite(v)) || value.factors.some(f=>!f || typeof f.code !== 'string' || typeof f.name !== 'string' || !Number.isFinite(f.weight) || typeof f.included !== 'boolean' || f.raw_value === undefined || typeof f.raw_value === 'number' && !Number.isFinite(f.raw_value) || f.grade != null && !Number.isFinite(f.grade)) || value.prediction_id !== predictionId || !['READY', 'PARTIAL', 'UNAVAILABLE'].includes(value.status))) invalid('RISK-01', '선택한 예측 ID와 위험도 상태');
   return value;
+}
+
+export function validateWeatherNow(value: C.WeatherNow) {
+  if (!value || !at(value.observed_at) || (['wind_dir','wind_speed','temp','humidity','precip'] as const).some(key=>value[key] != null && !Number.isFinite(value[key]))) invalid('WTH-01', '기상 관측시각과 유효한 관측값');
+  return value;
+}
+export function matchPredictionSlices(prediction: C.Prediction, slices: C.PredictionSlices) {
+  for (const f of slices.features) {
+    const p = prediction.slices.find(p=>p.hour===f.properties.hour);
+    if (!p || Date.parse(p.at) !== Date.parse(f.properties.at) || p.area_ha !== f.properties.area_ha) invalid('PRED-03', '예측 상세와 일치하는 시간별 도형의 시각·면적');
+  }
 }

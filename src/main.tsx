@@ -6,6 +6,7 @@ import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles/app.css';
 import './styles/markers.css';
+import './styles/stabilization.css';
 
 // Bundle the v6 worker through Vite, including its module imports.
 setWorkerUrl(workerUrl);

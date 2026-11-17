@@ -10,6 +10,7 @@ export const MapStage = memo(function MapStage() {
   return (
     <div id="stage">
       <div id="map"></div>
+      <div id="map-data-state" role="status" hidden></div>
       <div id="draw-hint"></div>
       <div id="compass" title="북쪽 맞춤" onClick={() => act('north')}>
         <svg viewBox="0 0 100 100">

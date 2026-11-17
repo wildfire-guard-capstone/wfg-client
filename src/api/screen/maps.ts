@@ -74,3 +74,14 @@ export function mapRenderData(snapshot: MapWindow) {
   const houses = collection(mapped('house', 'map_feature').filter((f) => f.geometry.type === 'Point'));
   return { villages, facilities, shelters, agencies, markers, boundaries, roads, power, houses };
 }
+
+/** Retain previously fetched facts only for failed parts, never for a successful empty response. */
+export function retainMapData(next: MapWindow, previous: MapWindow | null): MapWindow {
+  if (!previous) return next;
+  const collections = new Map(next.collections);
+  for (const [id,result] of collections) {
+    const old=previous.collections.get(id);
+    if (result.status === 'error' && old?.status === 'ready') collections.set(id,old);
+  }
+  return {...next,collections,areas:next.areas.status === 'error' && previous.areas.status === 'ready' ? previous.areas : next.areas};
+}

@@ -1,0 +1,209 @@
+/* P1: preserve palette, layout and map layers; constrain only data overflow. */
+#st-detail table.grid,
+#modal table.rv,
+#lp-body table.grid,
+#log-panel table.grid {
+  table-layout: fixed;
+}
+#st-detail td:not(.k),
+#modal-body td,
+#modal-body th,
+#lp-body td,
+#log-panel td,
+#cards .text,
+#cards .nm,
+#cards .finding,
+#evidence-drawer .ev-chunk,
+#chat-log .msg {
+  overflow-wrap: anywhere;
+  word-break: normal;
+  min-width: 0;
+}
+#modal table.rv td.num {
+  white-space: normal;
+}
+#modal table.rv th:nth-child(1) {
+  width: 30%;
+}
+#modal table.rv th:nth-child(2) {
+  width: 26%;
+}
+.rk-grp td {
+  background: var(--cell);
+  border-top: 2px solid var(--line2);
+  font-weight: 700;
+}
+#modal table.rv tr.grp td:first-child {
+  padding-left: 14px;
+}
+.p1-factor-meta {
+  display: block;
+  font-size: 11px;
+  font-weight: normal;
+  color: #666;
+  margin-top: 3px;
+}
+.p1-data-state {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  margin-bottom: 6px;
+}
+.proposal-section {
+  min-width: 0;
+}
+.proposal-section .section-title {
+  display: block;
+  margin: 6px 0 3px;
+}
+.proposal-section p {
+  margin: 4px 0;
+}
+.proposal-section ul,
+.proposal-section ol {
+  padding-left: 20px;
+  margin: 4px 0;
+}
+.proposal-table {
+  max-width: 100%;
+  overflow: auto;
+}
+.proposal-table table {
+  table-layout: fixed;
+}
+#cards .head {
+  flex-wrap: wrap;
+}
+#cards .head .nm {
+  min-width: 80px;
+}
+#cards .head .st {
+  max-width: 100%;
+}
+.p1-observed {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+.p1-observed input {
+  width: 100%;
+  box-sizing: border-box;
+}
+@media (max-width: 600px) {
+  #modal,
+  #modal.wide {
+    max-width: calc(100vw - 20px);
+  }
+  #modal table.rv th {
+    width: auto !important;
+  }
+  #risk-pop,
+  #left-panel,
+  #log-panel {
+    left: 6px;
+    right: 6px;
+    width: auto;
+    max-width: calc(100% - 12px);
+  }
+  #evidence-drawer {
+    width: min(440px, 100%);
+  }
+  #modal-body .diff {
+    flex-wrap: wrap;
+  }
+  #cards .detail .row {
+    flex-wrap: wrap;
+  }
+}
+
+#map-data-state {
+  position: absolute;
+  z-index: 6;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 45%;
+  padding: 4px 6px;
+  background: #fff;
+  border: 1px solid var(--line2);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+#map-data-state[hidden] {
+  display: none;
+}
+@media (max-width: 600px) {
+  #map-data-state {
+    top: auto;
+    bottom: 28px;
+    left: 6px;
+    transform: none;
+    max-width: calc(100% - 70px);
+  }
+}
+
+/* P2: keep table content inside the existing card, drawer, chat and comparison. */
+.proposal-table,
+.proposal-table-raw,
+.proposal-prose {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.proposal-table th,
+.proposal-table td {
+  overflow-wrap: anywhere;
+  white-space: normal;
+  vertical-align: top;
+}
+.proposal-table-note {
+  margin: 4px 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.proposal-table-original {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ev-chunk .ev-highlight {
+  background: #fff3a8;
+  padding: 0 2px;
+}
+.ev-highlight .proposal-table td {
+  background: #fff3a8;
+}
+#modal-body .diff {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+#modal-body .diff .col {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+#chat-log .msg {
+  min-width: 0;
+  box-sizing: border-box;
+  padding-inline: min(8px, 10%);
+}
+@media (max-width: 600px) {
+  /* The desktop drawer sits beside the card; keep it inside its host on mobile. */
+  #evidence-drawer {
+    left: 0;
+    right: 0;
+    width: auto;
+    max-width: 100%;
+  }
+}
+@media (max-width: 600px) {
+  /* Preserve the popup frame; don't let nested padding consume all text width. */
+  #chat-panel .fbody {
+    padding-inline: min(6px, 2%);
+  }
+  #chat-log {
+    padding-inline: min(8px, 3%);
+  }
+  #chat-log .msg > .cite {
+    padding-inline: min(4px, 10%);
+    margin-inline: min(1px, 2%);
+  }
+}

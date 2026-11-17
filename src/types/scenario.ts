@@ -72,6 +72,8 @@ export type Incident = {
     order_issued: boolean;
     cbs_sent: string[];
     completed_villages: string[];
+    /** HTTP evacuation facts keyed by village ID; absent is unknown. */
+    evacuated_by_id?: Record<string, boolean>;
     injuries: string[];
   };
   ended_at: string | null;
