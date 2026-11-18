@@ -24,7 +24,8 @@ export async function waitForOperation(
   } = {},
 ): Promise<Operation> {
   const interval = options.intervalMs ?? 2_000;
-  const maxWait = options.maxWaitMs ?? 120_000;
+  // 서버 예측은 ELMFIRE 계산 + 제안서 생성까지 5~8분 걸린다. 2분이면 서버가 계속 일하는 중에 '실패'로 보인다.
+  const maxWait = options.maxWaitMs ?? 15 * 60_000;
   if (
     !Number.isFinite(interval) ||
     interval < 0 ||
