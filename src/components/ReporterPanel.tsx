@@ -120,7 +120,7 @@ export const ReporterPanel = memo(function ReporterPanel() {
           <button id="rep-draw" onClick={() => act('toggleDraw')}>
             {'지도에서 그리기'}
           </button>
-          <button id="rep-draw-done" disabled onClick={() => act('finishDraw')}>
+          <button id="rep-draw-done" onClick={() => act('finishDraw')}>
             {'그리기 완료'}
           </button>
           <button id="rep-draw-clear" onClick={() => act('clearDraw')}>

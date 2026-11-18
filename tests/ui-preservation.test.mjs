@@ -30,7 +30,10 @@ test('original components, CSS, map models and scenario data stay unchanged outs
         : file === 'src/components/MapStage.tsx'
           ? readFileSync(new URL(file, root), 'utf8').replace('\n      <div id="map-data-state" role="status" hidden></div>', '')
           : file === 'src/components/ReporterPanel.tsx'
-          ? readFileSync(new URL(file, root), 'utf8').replace(`\n        <label className="p1-observed">{'화선 관측시각 (실제 측정 시각)'}<input id="rep-observed" type="datetime-local" /></label>`, '')
+          ? readFileSync(new URL(file, root), 'utf8')
+            // 그리기 완료: React의 disabled prop이 클릭을 막아 제거. 활성화 여부는 renderReporter가 DOM으로 관리한다.
+            .replace(`<button id="rep-draw-done" onClick`, `<button id="rep-draw-done" disabled onClick`)
+            .replace(`\n        <label className="p1-observed">{'화선 관측시각 (실제 측정 시각)'}<input id="rep-observed" type="datetime-local" /></label>`, '')
           : file === 'src/main.tsx'
             ? readFileSync(new URL(file, root), 'utf8').replace("import './styles/stabilization.css';\n", '')
             : readFileSync(new URL(file, root))),
