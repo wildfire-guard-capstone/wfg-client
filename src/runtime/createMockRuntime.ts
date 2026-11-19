@@ -2712,7 +2712,7 @@ export function createMockRuntime() {
         ? 0
         : Math.max(0, Math.min(100, ((rk.score - 1) / 4) * 100));
     body.innerHTML = `
-      ${dataBridge ? `<div class="p1-data-state">${esc(stateText(dataBridge.dataState('risk'), '위험도'))}${dataBridge.riskData()?.unavailable_reasons?.length ? ' · ' + richText(dataBridge.riskData().unavailable_reasons.join(' · ')) : ''}</div>` : ''}
+      ${dataBridge && dataBridge.dataState('risk') !== 'partial' ? `<div class="p1-data-state">${esc(stateText(dataBridge.dataState('risk'), '위험도'))}</div>` : ''}
       <div class="rk-top"><div class="rk-v ${riskBand(rk.score)}">${numberText(rk.score, 2)}</div><div class="rk-scale"><div class="rk-track"><i style="left:${pos}%"></i></div><div class="rk-ticks"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span></div></div></div>
       <table class="grid rk-fac"><thead><tr><th>요소</th><th>점수</th><th style="width:62px">가중치</th></tr></thead><tbody>${rk.factors
         .map(
@@ -2756,7 +2756,7 @@ export function createMockRuntime() {
           vs
             .map(
               (v) =>
-                `<tr data-factor="${esc(v.key)}"><td>${esc(v.name)}${dataBridge ? `<span class="p1-factor-meta">${richText([v.included === false ? '계산 제외' : '', v.reason, v.source ? '출처: ' + v.source : '', v.valueAt ? '관측: ' + fmtIso(v.valueAt) : ''].filter(Boolean).join(' · '))}</span>` : ''}</td><td class="num">${v.value == null ? (dataBridge ? '미산출' : warnHTML('가져오지 못함')) : esc(varValueText(v))}</td><td style="text-align:center">${esc(v.unit || '—')}</td><td class="num">${numberText(v.wn, 3)}</td><td class="num">${riskChip(v.grade, 0)}</td></tr>`,
+                `<tr data-factor="${esc(v.key)}"><td>${esc(v.name)}${dataBridge && (v.included === false || v.reason) ? `<span class="p1-factor-meta">${richText([v.included === false ? '계산 제외' : '', v.reason].filter(Boolean).join(' · '))}</span>` : ''}</td><td class="num">${v.value == null ? (dataBridge ? '미산출' : warnHTML('가져오지 못함')) : esc(varValueText(v))}</td><td style="text-align:center">${esc(v.unit || '—')}</td><td class="num">${numberText(v.wn, 3)}</td><td class="num">${riskChip(v.grade, 0)}</td></tr>`,
             )
             .join('')
         );
