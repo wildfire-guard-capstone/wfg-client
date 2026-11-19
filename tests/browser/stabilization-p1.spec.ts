@@ -230,7 +230,7 @@ test('P1 structured text keeps breaks/lists/tables/withheld reasons and escapes 
   expect(h.errors).toEqual([]);
 });
 for (const width of [1440, 390])
-  test(`P1 ${width}px: risk H/X hierarchy, source/reason and long tokens fit modal columns`, async ({
+  test(`P1 ${width}px: risk H/X hierarchy, retained reasons and long tokens fit modal columns`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: 960 });
@@ -241,7 +241,7 @@ for (const width of [1440, 390])
     await expect(page.locator('#modal .rk-grp')).toHaveCount(2);
     await expect(page.locator('#modal .rv .grp')).toHaveCount(6);
     await expect(page.locator('#modal')).toContainText('실제 서버 미수집 사유');
-    await expect(page.locator('#modal')).toContainText('서버 원천');
+    await expect(page.locator('#modal')).not.toContainText('서버 원천');
     const wind = page
       .locator('#modal .rv tbody tr')
       .filter({ has: page.locator('td', { hasText: /^목업 wind_speed/ }) });
