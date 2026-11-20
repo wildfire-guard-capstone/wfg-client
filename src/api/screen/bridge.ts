@@ -200,12 +200,34 @@ export function createScreenBridge(
   function expire(reason = '인증 토큰 만료') {
     const hadSession = currentUser !== null || loading || state.role !== null;
     source.client.clearSession();
+    storeExpiry(null);
     reset();
     if (hadSession && !disposed) host.leave(reason);
   }
+  // 새로고침 뒤 세션 복원용: 토큰은 TokenStore(sessionStorage)에, 만료 시각은 여기 함께 둔다.
+  const EXPIRY_KEY = 'wfg-api-access-token-expires-at';
+  function storedExpiry(): number | null {
+    try {
+      const value = Number(globalThis.sessionStorage?.getItem(EXPIRY_KEY));
+      return Number.isFinite(value) && value > 0 ? value : null;
+    } catch {
+      return null;
+    }
+  }
+  function storeExpiry(expiresAt: number | null) {
+    try {
+      if (expiresAt === null) globalThis.sessionStorage?.removeItem(EXPIRY_KEY);
+      else globalThis.sessionStorage?.setItem(EXPIRY_KEY, String(expiresAt));
+    } catch {
+      /* storage unavailable: refresh simply returns to the login screen */
+    }
+  }
   function scheduleExpiry(expiresIn: number) {
+    scheduleExpiryAt(Date.now() + expiresIn * 1000);
+  }
+  function scheduleExpiryAt(expiresAt: number) {
     clearTimeout(expiryTimer);
-    const expiresAt = Date.now() + expiresIn * 1000;
+    storeExpiry(expiresAt);
     const check = () => {
       const remaining = expiresAt - Date.now();
       if (remaining <= 0) expire();
@@ -641,6 +663,72 @@ export function createScreenBridge(
       }
     });
   }
+  async function enterAs(user: C.User, signal: AbortSignal, epoch: number) {
+    currentUser = user;
+    if (user.role === 'ADMIN') {
+      await Promise.all([
+        accounts(signal, epoch),
+        resources(undefined, signal, epoch),
+      ]);
+      if (!alive(epoch)) return;
+      host.enter(accountView(user));
+      bindAdmin();
+      return;
+    }
+    listStatus = 'loading';
+    const directory = await remote(() =>
+      source.incidentDirectory(signal),
+    );
+    if (!alive(epoch)) return;
+    const list = directory.status === 'ready' ? directory.data.items : [];
+    listStatus = directory.status === 'ready' ? 'ready' : 'error';
+    listError =
+      directory.status === 'error' ? directory.error : undefined;
+    incidentSummaries.clear();
+    for (const row of list) incidentSummaries.set(row.id, row);
+    S.incidents = [];
+    if (directory.status === 'ready')
+      for (const [id, detail] of directory.data.details) {
+        if (detail.status === 'ready') {
+          raw.set(id, detail.data);
+          S.incidents.push(incidentDetailsView(detail.data, []));
+        } else if (detail.status === 'error')
+          errors.set(`${id}.incident`, detail.error);
+      }
+    state.inc = {};
+    state.events = [];
+    state.incId =
+      list.find((i) => i.status === 'IN_PROGRESS' && raw.has(i.id))?.id ??
+      list.find((i) => raw.has(i.id))?.id ??
+      '__NULL__';
+    if (raw.has(state.incId)) {
+      const data = await source.loadIncident(
+        state.incId,
+        user.role,
+        signal,
+        raw.get(state.incId),
+      );
+      if (!alive(epoch)) return;
+      install(data);
+      currentWeather = weatherCache.get(data.incident.id) ?? null;
+      if (data.prediction.status === 'ready')
+        host.baseAt(data.prediction.data.base_at);
+    }
+    if (!S.incidents.length) S.incidents = [emptyIncident(origin)];
+    host.enter(accountView(user));
+    if (!raw.has(state.incId) && user.role === 'REPORTER')
+      host.reportForm(null);
+    if (listError)
+      host.notice(`산불 목록을 불러오지 못했습니다. ${error(listError)}`);
+    if (raw.has(state.incId)) {
+      await Promise.all([
+        resources(state.incId, signal, epoch),
+        histories(state.incId, signal, epoch),
+      ]);
+      if (!alive(epoch)) return;
+      host.refresh();
+    }
+  }
   async function login() {
     if (loading || loggingOut || disposed) return;
     const body: C.LoginRequest = {
@@ -676,70 +764,7 @@ export function createScreenBridge(
             user.role !== body.role
           )
             throw new Error('로그인 계정의 권한이 선택한 역할과 다릅니다.');
-          currentUser = user;
-          if (user.role === 'ADMIN') {
-            await Promise.all([
-              accounts(signal, epoch),
-              resources(undefined, signal, epoch),
-            ]);
-            if (!alive(epoch)) return;
-            host.enter(accountView(user));
-            bindAdmin();
-            return;
-          }
-          listStatus = 'loading';
-          const directory = await remote(() =>
-            source.incidentDirectory(signal),
-          );
-          if (!alive(epoch)) return;
-          const list = directory.status === 'ready' ? directory.data.items : [];
-          listStatus = directory.status === 'ready' ? 'ready' : 'error';
-          listError =
-            directory.status === 'error' ? directory.error : undefined;
-          incidentSummaries.clear();
-          for (const row of list) incidentSummaries.set(row.id, row);
-          S.incidents = [];
-          if (directory.status === 'ready')
-            for (const [id, detail] of directory.data.details) {
-              if (detail.status === 'ready') {
-                raw.set(id, detail.data);
-                S.incidents.push(incidentDetailsView(detail.data, []));
-              } else if (detail.status === 'error')
-                errors.set(`${id}.incident`, detail.error);
-            }
-          state.inc = {};
-          state.events = [];
-          state.incId =
-            list.find((i) => i.status === 'IN_PROGRESS' && raw.has(i.id))?.id ??
-            list.find((i) => raw.has(i.id))?.id ??
-            '__NULL__';
-          if (raw.has(state.incId)) {
-            const data = await source.loadIncident(
-              state.incId,
-              user.role,
-              signal,
-              raw.get(state.incId),
-            );
-            if (!alive(epoch)) return;
-            install(data);
-            currentWeather = weatherCache.get(data.incident.id) ?? null;
-            if (data.prediction.status === 'ready')
-              host.baseAt(data.prediction.data.base_at);
-          }
-          if (!S.incidents.length) S.incidents = [emptyIncident(origin)];
-          host.enter(accountView(user));
-          if (!raw.has(state.incId) && user.role === 'REPORTER')
-            host.reportForm(null);
-          if (listError)
-            host.notice(`산불 목록을 불러오지 못했습니다. ${error(listError)}`);
-          if (raw.has(state.incId)) {
-            await Promise.all([
-              resources(state.incId, signal, epoch),
-              histories(state.incId, signal, epoch),
-            ]);
-            if (!alive(epoch)) return;
-            host.refresh();
-          }
+          await enterAs(user, signal, epoch);
         } catch (cause) {
           if (alive(epoch) && !signal.aborted) {
             source.client.clearSession();
@@ -762,6 +787,43 @@ export function createScreenBridge(
       }
     }
   }
+  /** 새로고침 뒤: 저장된 토큰이 아직 유효하면 로그인 화면을 건너뛰고 같은 계정으로 들어간다. */
+  async function resume() {
+    if (loading || loggingOut || disposed || currentUser) return;
+    if (!source.client.getAccessToken()) return;
+    const expiresAt = storedExpiry();
+    if (expiresAt !== null && expiresAt <= Date.now()) {
+      source.client.clearSession();
+      storeExpiry(null);
+      return;
+    }
+    loading = true;
+    const resumeEpoch = generation;
+    host.loginBusy(true);
+    try {
+      await task(async (signal, epoch) => {
+        try {
+          const user = await source.api.auth.me({ signal });
+          if (!alive(epoch)) return;
+          if (expiresAt !== null) scheduleExpiryAt(expiresAt);
+          await enterAs(user, signal, epoch);
+        } catch {
+          if (alive(epoch) && !signal.aborted) {
+            source.client.clearSession();
+            storeExpiry(null);
+            clearTimeout(expiryTimer);
+            expiryTimer = undefined;
+            currentUser = null;
+          }
+        }
+      });
+    } finally {
+      if (alive(resumeEpoch)) {
+        loading = false;
+        host.loginBusy(false);
+      }
+    }
+  }
   async function logout() {
     if (loggingOut || disposed) return;
     loggingOut = true;
@@ -770,6 +832,7 @@ export function createScreenBridge(
     // Capture the current Bearer header, then leave locally even if logging fails.
     const pending = token ? source.api.auth.logout() : Promise.resolve();
     source.client.clearSession();
+    storeExpiry(null);
     host.leave();
     host.loginBusy(true);
     try {
@@ -1352,6 +1415,7 @@ export function createScreenBridge(
   }
   return {
     login,
+    resume,
     logout,
     expire,
     select,
@@ -1438,7 +1502,11 @@ export function createScreenBridge(
     dispose() {
       disposed = true;
       reset();
+      // 화면 정리일 뿐 로그아웃이 아니다: 진행 중 요청은 끊되(세션 번호 증가),
+      // 새로고침·재마운트 뒤 resume()이 쓰도록 저장된 토큰은 남긴다.
+      const token = source.client.getAccessToken();
       source.client.clearSession();
+      if (token) source.client.setAccessToken(token);
     },
   };
 }
