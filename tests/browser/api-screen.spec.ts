@@ -1,3 +1,4 @@
+import { fillScenarioLogin } from './helpers/login';
 import { test, expect, type Page } from '@playwright/test';
 import {
   createMockFetch,
@@ -49,7 +50,7 @@ async function server(page: Page, scenarios: MockOptions['scenarios'] = {}) {
 }
 async function login(page: Page, role = 'commander') {
   await page.goto('/');
-  await page.locator('#login-role').selectOption(role);
+  await fillScenarioLogin(page, role);
   await page.locator('#login-btn').click();
   await expect(page.locator('#login-overlay')).toBeHidden();
   await expect

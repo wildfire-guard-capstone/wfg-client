@@ -1,9 +1,12 @@
+import { demoAccount } from '../api/demo-accounts';
 import { useMockActions } from '../runtime/MockRuntimeProvider';
 import { memo } from 'react';
 import logo from '../assets/logo.png';
 
 export const LoginScreen = memo(function LoginScreen() {
   const act = useMockActions();
+  const demo = demoAccount(import.meta.env, 'commander');
+  const legacy = !import.meta.env.VITE_API_MODE;
   return (
     <div id="login-overlay">
       <div className="lg-top">
@@ -65,7 +68,7 @@ export const LoginScreen = memo(function LoginScreen() {
               {'아이디'}
               <input
                 id="login-id"
-                defaultValue="cmd01"
+                defaultValue={demo?.loginId ?? (legacy ? 'cmd01' : '')}
                 autoComplete="off"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') act('login');
@@ -77,7 +80,7 @@ export const LoginScreen = memo(function LoginScreen() {
               <input
                 id="login-pw"
                 type="password"
-                defaultValue="1234"
+                defaultValue={demo?.password ?? (legacy ? '1234' : '')}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') act('login');
                 }}

@@ -1,3 +1,4 @@
+import { fillScenarioLogin } from './helpers/login';
 import { test, expect, type Page } from '@playwright/test';
 import {
   createMockFetch,
@@ -63,7 +64,7 @@ async function backend(page: Page, scenarios: MockOptions['scenarios'] = {}) {
   };
 }
 async function login(page: Page) {
-  await page.goto('/');
+  await page.goto('/'); await fillScenarioLogin(page);
   await page.locator('#login-btn').click();
   await expect(page.locator('#login-overlay')).toBeHidden();
   await page.waitForFunction(() => window.__mock?.map?.getSource('fire-cum'));
