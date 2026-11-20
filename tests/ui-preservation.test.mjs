@@ -48,6 +48,9 @@ test('original components, CSS, map models and scenario data stay unchanged outs
               .replace("  const demo = demoAccount(import.meta.env, 'commander');\n  const legacy = !import.meta.env.VITE_API_MODE;\n", '')
               .replace("defaultValue={demo?.loginId ?? (legacy ? 'cmd01' : '')}", 'defaultValue="cmd01"')
               .replace("defaultValue={demo?.password ?? (legacy ? '1234' : '')}", 'defaultValue="1234"')
+          : file === 'src/components/MapToolbar.tsx'
+            ? readFileSync(new URL(file, root), 'utf8')
+              .replace(/className="blue lyr-btn off"(\s+data-layer="(?:water|routes)")/g, 'className="blue lyr-btn"$1')
           : file === 'src/main.tsx'
             ? readFileSync(new URL(file, root), 'utf8').replace("import './styles/stabilization.css';\n", '')
             : readFileSync(new URL(file, root))),
