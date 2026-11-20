@@ -1,3 +1,4 @@
+import { fillScenarioLogin } from './helpers/login';
 import { test, expect } from '@playwright/test';
 import { createMockFetch } from '../../src/api/mock/transport';
 import { screenMockOptions } from '../../src/api/screen/mock-seed';
@@ -14,7 +15,7 @@ async function backend(page, failed = false) {
     const response = await fetcher(r.url(), { method: r.method(), headers: r.headers(), ...(r.postData() ? { body: r.postData()! } : {}) });
     await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body: await response.text() }).catch(() => {});
   });
-  await page.goto('/'); await page.locator('#login-btn').click();
+  await page.goto('/'); await fillScenarioLogin(page); await page.locator('#login-btn').click();
   await expect(page.locator('#login-overlay')).toBeHidden();
   return { calls, errors };
 }

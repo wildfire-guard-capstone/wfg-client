@@ -34,6 +34,20 @@ test('original components, CSS, map models and scenario data stay unchanged outs
             // 그리기 완료: React의 disabled prop이 클릭을 막아 제거. 활성화 여부는 renderReporter가 DOM으로 관리한다.
             .replace(`<button id="rep-draw-done" onClick`, `<button id="rep-draw-done" disabled onClick`)
             .replace(`\n        <label className="p1-observed">{'화선 관측시각 (실제 측정 시각)'}<input id="rep-observed" type="datetime-local" /></label>`, '')
+          : file === 'src/runtime/MockRuntimeProvider.tsx'
+            ? readFileSync(new URL(file, root), 'utf8')
+              .replace("  useEffect,\n", '')
+              .replace("import { browserSessionStorage } from '../api/auth-session';\n", '')
+              .replace(/  useEffect\(\(\) => \{[\s\S]*?  \}, \[\]\);\n/, '')
+              .replace(/    const root = document.getElementById\('root'\)!;[\s\S]*?    const runtime = createMockRuntime\(\);/, '    const runtime = createMockRuntime();')
+              .replace(/    void runtime.ready.finally\(\(\) => \{[\s\S]*?    \}\);\n/, '')
+              .replace("      active = false;\n      if (restoring) { root.style.visibility = previousVisibility; root.removeAttribute('aria-busy'); }\n", '')
+          : file === 'src/components/LoginScreen.tsx'
+            ? readFileSync(new URL(file, root), 'utf8')
+              .replace("import { demoAccount } from '../api/demo-accounts';\n", '')
+              .replace("  const demo = demoAccount(import.meta.env, 'commander');\n  const legacy = !import.meta.env.VITE_API_MODE;\n", '')
+              .replace("defaultValue={demo?.loginId ?? (legacy ? 'cmd01' : '')}", 'defaultValue="cmd01"')
+              .replace("defaultValue={demo?.password ?? (legacy ? '1234' : '')}", 'defaultValue="1234"')
           : file === 'src/main.tsx'
             ? readFileSync(new URL(file, root), 'utf8').replace("import './styles/stabilization.css';\n", '')
             : readFileSync(new URL(file, root))),
@@ -91,4 +105,10 @@ test('original map setup, layer styles, markers and drawing functions stay ident
     Object.fromEntries(Object.entries(baseline.renderer_markup).filter(([name])=>!approvedP1.has(name))),
     'existing panel/modal/card structure changed',
   );
+});
+
+test('auth restoration keeps the provider wrapper and original login design intact', () => {
+  const provider = readFileSync(new URL('src/runtime/MockRuntimeProvider.tsx', root), 'utf8');
+  assert.match(provider, /<RuntimeContext.Provider value=\{runtimeRef\}>\s*\{children\}\s*<\/RuntimeContext.Provider>/);
+  assert.match(provider, /root.style.visibility = 'hidden'/);
 });

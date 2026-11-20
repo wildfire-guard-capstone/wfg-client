@@ -1,3 +1,5 @@
+import { createAuthSession, browserSessionStorage } from '../api/auth-session';
+import { demoAccount } from '../api/demo-accounts';
 import { richText, contentHTML, withCitations, comparisonHTML, sectionHTML, missingHTML, stateText, remoteState, canCorrectPerimeter } from '../api/screen/presentation';
 import type {
   Feature,
@@ -58,6 +60,7 @@ export function createMockRuntime() {
   const lifecycle = createLifecycle();
   const S = createScenario();
   const apiMode = import.meta.env.VITE_API_MODE;
+  const authSession = createAuthSession(apiMode === 'http' ? browserSessionStorage() : undefined);
   let BOUNDARIES: FeatureCollection = apiMode ? { type: 'FeatureCollection', features: [] } : STATIC_BOUNDARIES;
   let OSM_LINES: FeatureCollection = apiMode ? { type: 'FeatureCollection', features: [] } : STATIC_OSM_LINES;
   if (apiMode) {
@@ -2371,6 +2374,7 @@ export function createMockRuntime() {
       b.classList.toggle('on', b.dataset.tab === tab),
     );
     $$('.ipt').forEach((p) => p.classList.toggle('on', p.id === `ipt-${tab}`));
+    if (dataBridge && state.role) authSession.rememberView(state.incId, tab);
   }
   // 산불 날개: 왼쪽 고정 창 위에 산불 목록을 펼친다
   function toggleIncDrawer(on?: boolean) {
@@ -4676,6 +4680,14 @@ export function createMockRuntime() {
   // 사용자 구분을 바꾸면 그 구분의 시연 계정(발급 상태 첫 계정)을 자동으로 채운다(목업 편의)
   function fillDemoAccount() {
     const role = $('#login-role').value;
+    if (apiMode) {
+      const demo = demoAccount(import.meta.env, role);
+      if (demo) {
+        $('#login-id').value = demo.loginId;
+        $('#login-pw').value = demo.password;
+      }
+      return;
+    }
     const acc =
       S.accounts.find((a) => a.role === role && a.status === '발급') ||
       S.accounts.find((a) => a.role === role);
@@ -5222,6 +5234,8 @@ export function createMockRuntime() {
   lifecycle.listen(window, 'resize', syncAppLayout);
   syncAppLayout();
   const api = {
+    get ready() { return ready; },
+    restoreSession,
     state,
     S,
     get map() {
@@ -5266,6 +5280,7 @@ export function createMockRuntime() {
         },
         {
           mock,
+          tokenStore: authSession.tokenStore,
           onUnauthorized: () => {
             dataBridge?.expire('인증 정보 만료 또는 무효');
           },
@@ -5279,8 +5294,9 @@ export function createMockRuntime() {
         state,
         IS,
         refresh: refreshApiDisplay,
-        enter: (account) => {
+        enter: (account, view) => {
           enterSession(account);
+          if (view) showTab(view.tab);
           if (map.loaded()) bindApiMap();
           else map.once('load', bindApiMap);
         },
@@ -5299,6 +5315,7 @@ export function createMockRuntime() {
             suppressSelectionLoad = false;
           }
           scheduleApiMap();
+          authSession.rememberView(id, document.querySelector('.ip-tab.on')?.getAttribute('data-tab') === 'proposal' ? 'proposal' : 'status');
         },
         reportForm: loadRepForm,
         admin: renderAdmin,
@@ -5341,12 +5358,22 @@ export function createMockRuntime() {
           $('#ipt-proposal').closest('.sp-body').scrollTop = 0;
         },
       },
-      { accountAdminAreaId: import.meta.env.VITE_ACCOUNT_ADMIN_AREA_ID },
+      { accountAdminAreaId: import.meta.env.VITE_ACCOUNT_ADMIN_AREA_ID, authSession, preserveSessionOnDispose: true },
     );
     mapSource = source;
   }
   window.__mock = api;
   if (!dataBridge) resumeSession();
+  let resolveReady!: () => void;
+  const ready = new Promise<void>((resolve) => { resolveReady = resolve; });
+  let restoreStarted = false;
+  function restoreSession(): Promise<void> {
+    if (!restoreStarted) {
+      restoreStarted = true;
+      void (dataBridge?.restoreSession() ?? Promise.resolve()).finally(resolveReady);
+    }
+    return ready;
+  }
   const actions = {
     login,
     fillDemoAccount,
@@ -5507,10 +5534,12 @@ export function createMockRuntime() {
   };
   return {
     ...api,
+    ready,
     actions,
     dispose() {
       mapRequest?.abort(); entityRequest?.abort();
       dataBridge?.dispose();
+      resolveReady();
       lifecycle.dispose();
       headerResizeObserver.disconnect();
       Object.values(state.markers).forEach((marker) => marker.remove());

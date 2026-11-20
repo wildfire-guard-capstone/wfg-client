@@ -1,3 +1,4 @@
+import type { AuthSession, SessionView } from '../auth-session.ts';
 import { remoteState, stateText, observedAt, canCorrectPerimeter } from './presentation.ts';
 import type * as C from '../contracts.ts';
 import type { ApiDataSource, IncidentData } from '../data-source.ts';
@@ -37,7 +38,7 @@ export interface ScreenHost {
   state: AppState;
   IS: (id?: string) => IncidentState;
   refresh: () => void;
-  enter: (account: Account) => void;
+  enter: (account: Account, view?: SessionView) => void;
   leave: (reason?: string) => void;
   selected: (id: string, fly?: boolean) => void;
   reportForm: (id: string | null) => void;
@@ -73,7 +74,7 @@ const escaped = (value: unknown) =>
 export function createScreenBridge(
   source: ApiDataSource,
   host: ScreenHost,
-  options: { accountAdminAreaId?: string } = {},
+  options: { accountAdminAreaId?: string; authSession?: AuthSession; preserveSessionOnDispose?: boolean } = {},
 ) {
   const { S, state, IS } = host;
   const origin: [number, number] = [...S.incidents[0]!.ignition];
@@ -641,15 +642,20 @@ export function createScreenBridge(
       }
     });
   }
-  async function login() {
+  async function login() { return authenticate(false); }
+  async function restoreSession() {
+    if (!source.client.getAccessToken()) return;
+    return authenticate(true);
+  }
+  async function authenticate(restoring: boolean) {
     if (loading || loggingOut || disposed) return;
-    const body: C.LoginRequest = {
+    const body: C.LoginRequest | null = restoring ? null : {
       login_id: input('login-id'),
       // A password is opaque: leading/trailing whitespace is significant.
       password: (document.getElementById('login-pw') as HTMLInputElement).value,
       role: roleToApi(input('login-role')),
     };
-    if (!body.login_id || !body.password) {
+    if (body && (!body.login_id || !body.password)) {
       host.loginError(
         !body.login_id ? '아이디를 입력하십시오.' : '비밀번호를 입력하십시오.',
       );
@@ -662,20 +668,17 @@ export function createScreenBridge(
     try {
       await task(async (signal, epoch) => {
         try {
-          const result = await source.api.auth.login({
-            body,
-            signal,
-          });
+          const result = body ? await source.api.auth.login({ body, signal }) : null;
           if (!alive(epoch)) return;
-          scheduleExpiry(result.expires_in);
+          const remaining = result?.expires_in ?? options.authSession?.remainingSeconds() ?? 0;
+          if (remaining <= 0) throw new Error('인증 토큰 만료. 다시 로그인하십시오.');
+          scheduleExpiry(remaining);
+          if (result) options.authSession?.remember(result.user.id, remaining);
           const user = await source.api.auth.me({ signal });
           if (!alive(epoch)) return;
-          if (
-            user.id !== result.user.id ||
-            user.role !== result.user.role ||
-            user.role !== body.role
-          )
+          if (result && (user.id !== result.user.id || user.role !== result.user.role || user.role !== body?.role))
             throw new Error('로그인 계정의 권한이 선택한 역할과 다릅니다.');
+          const view = restoring ? options.authSession?.viewFor(user.id) : undefined;
           currentUser = user;
           if (user.role === 'ADMIN') {
             await Promise.all([
@@ -683,7 +686,7 @@ export function createScreenBridge(
               resources(undefined, signal, epoch),
             ]);
             if (!alive(epoch)) return;
-            host.enter(accountView(user));
+            host.enter(accountView(user), view);
             bindAdmin();
             return;
           }
@@ -710,6 +713,7 @@ export function createScreenBridge(
           state.inc = {};
           state.events = [];
           state.incId =
+            (view && raw.has(view.incidentId) ? view.incidentId : undefined) ??
             list.find((i) => i.status === 'IN_PROGRESS' && raw.has(i.id))?.id ??
             list.find((i) => raw.has(i.id))?.id ??
             '__NULL__';
@@ -727,7 +731,7 @@ export function createScreenBridge(
               host.baseAt(data.prediction.data.base_at);
           }
           if (!S.incidents.length) S.incidents = [emptyIncident(origin)];
-          host.enter(accountView(user));
+          host.enter(accountView(user), view);
           if (!raw.has(state.incId) && user.role === 'REPORTER')
             host.reportForm(null);
           if (listError)
@@ -1352,6 +1356,7 @@ export function createScreenBridge(
   }
   return {
     login,
+    restoreSession,
     logout,
     expire,
     select,
@@ -1438,7 +1443,7 @@ export function createScreenBridge(
     dispose() {
       disposed = true;
       reset();
-      source.client.clearSession();
+      if (!options.preserveSessionOnDispose) source.client.clearSession();
     },
   };
 }

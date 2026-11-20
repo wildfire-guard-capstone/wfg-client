@@ -1,3 +1,4 @@
+import { fillScenarioLogin } from './helpers/login';
 import { test, expect, type Page } from '@playwright/test';
 import { createMockFetch } from '../../src/api/mock/transport';
 import { screenMockOptions } from '../../src/api/screen/mock-seed';
@@ -94,7 +95,7 @@ test('login click/Enter duplicates are blocked without changing the form; logout
   page,
 }) => {
   const { calls, releaseLogin } = await authServer(page, { holdLogin: true });
-  await page.goto('/');
+  await page.goto('/'); await fillScenarioLogin(page);
   const form = page.locator('.lg-form');
   const before = await form.boundingBox();
   await page.locator('#login-btn').click();
@@ -139,7 +140,7 @@ test('expires_in returns to original login without sending AUTH-03', async ({
 }) => {
   const { calls } = await authServer(page, { expiresIn: 5 });
   await page.clock.install();
-  await page.goto('/');
+  await page.goto('/'); await fillScenarioLogin(page);
   await page.locator('#login-btn').click();
   await expect(page.locator('#login-overlay')).toBeHidden();
   await page.clock.fastForward(5_001);
@@ -157,7 +158,7 @@ test('AUTH-02 server failure stays an error and permits retry; it is never missi
   page,
 }) => {
   await authServer(page, { meFails: true });
-  await page.goto('/');
+  await page.goto('/'); await fillScenarioLogin(page);
   await page.locator('#login-btn').click();
   await expect(page.locator('#login-err')).toContainText('일시적인 서버 오류');
   await expect(page.locator('#login-err')).not.toContainText('[필요한 정보:');
@@ -169,7 +170,7 @@ test('failed logout logging still returns to login and permits the next login', 
   page,
 }) => {
   const { calls } = await authServer(page, { logoutFails: true });
-  await page.goto('/');
+  await page.goto('/'); await fillScenarioLogin(page);
   await page.locator('#login-btn').click();
   await expect(page.locator('#login-overlay')).toBeHidden();
   await page.getByRole('button', { name: '로그아웃', exact: true }).click();
