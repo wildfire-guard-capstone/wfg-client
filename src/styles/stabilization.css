@@ -324,3 +324,9 @@
     margin-inline: min(1px, 2%);
   }
 }
+
+/* 새로고침 뒤 로그인 복원 중: 로그인 화면이 잠깐 보였다 사라지는 깜빡임 방지 (src/runtime/resumeHint.ts) */
+html.wfg-resuming #login-overlay,
+html.wfg-resuming #login-overlay * {
+  visibility: hidden !important;
+}

@@ -10,6 +10,17 @@ import type {
   MultiLineString,
 } from 'geojson';
 import { createApiClientFromEnv } from '../api/environment';
+import { createMemoryTokenStore, createSessionTokenStore } from '../api/session';
+import { beginResumeHint, endResumeHint } from './resumeHint';
+
+function browserSessionTokenStore() {
+  try {
+    if (globalThis.sessionStorage) return createSessionTokenStore(globalThis.sessionStorage);
+  } catch {
+    /* storage blocked: fall back to memory (refresh logs out) */
+  }
+  return createMemoryTokenStore();
+}
 import { createApiDataSource, type ApiDataSource } from '../api/data-source';
 import { villageEvacuated, evacuationText } from '../api/screen/incidents';
 import { retainMapData, mapRenderData, type MapWindow, type MapMarker } from '../api/screen/maps';
@@ -5266,6 +5277,8 @@ export function createMockRuntime() {
         },
         {
           mock,
+          // 실서버 모드에서는 탭 안에서만 토큰을 남겨 새로고침해도 로그인이 유지된다(탭을 닫으면 사라짐).
+          tokenStore: apiMode === 'http' ? browserSessionTokenStore() : undefined,
           onUnauthorized: () => {
             dataBridge?.expire('인증 정보 만료 또는 무효');
           },
@@ -5346,7 +5359,11 @@ export function createMockRuntime() {
     mapSource = source;
   }
   window.__mock = api;
-  if (!dataBridge) resumeSession();
+  beginResumeHint();
+  if (!dataBridge) {
+    endResumeHint();
+    resumeSession();
+  } else void dataBridge.resume().finally(endResumeHint);
   const actions = {
     login,
     fillDemoAccount,
