@@ -77,7 +77,7 @@ export const MapToolbar = memo(function MapToolbar() {
           {'대피소'}
         </button>
         <button
-          className="blue lyr-btn"
+          className="blue lyr-btn off"
           data-layer="water"
           title="헬기 담수지"
           onClick={(e) => act('toggleLayer', e.currentTarget)}
@@ -125,7 +125,7 @@ export const MapToolbar = memo(function MapToolbar() {
           {'철도'}
         </button>
         <button
-          className="blue lyr-btn"
+          className="blue lyr-btn off"
           data-layer="routes"
           title="대피로(파랑) · 진화차량 진입로(흰 점선) · 둘이 겹치는 구간(빨강)"
           onClick={(e) => act('toggleLayer', e.currentTarget)}
