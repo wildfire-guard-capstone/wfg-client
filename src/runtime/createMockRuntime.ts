@@ -11,7 +11,7 @@ import type {
 } from 'geojson';
 import { createApiClientFromEnv } from '../api/environment';
 import { createMemoryTokenStore, createSessionTokenStore } from '../api/session';
-import { endResumeHint } from './resumeHint';
+import { beginResumeHint, endResumeHint } from './resumeHint';
 
 function browserSessionTokenStore() {
   try {
@@ -5359,6 +5359,7 @@ export function createMockRuntime() {
     mapSource = source;
   }
   window.__mock = api;
+  beginResumeHint();
   if (!dataBridge) {
     endResumeHint();
     resumeSession();
