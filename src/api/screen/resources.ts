@@ -45,3 +45,9 @@ export function validateResourceBases(value: ResourceBase[]) {
     throw new ApiError({endpoint:'BASE-01',kind:'protocol',code:'INVALID_RESPONSE',message:'[필요한 정보: 기지 ID·명칭]'});
   return value;
 }
+
+/** Resource popup display only: keep unknown facts in the model and real zeroes on screen. */
+export function resourceCellText(value: unknown): string {
+  if (value == null || value === '정보 미제공' || typeof value === 'number' && !Number.isFinite(value)) return '';
+  return String(value);
+}
