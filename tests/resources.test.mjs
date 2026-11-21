@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createApiClient, createApiDataSource, createMockFetch, createFixtures } from '../src/api/index.ts';
-import { resourceRequest } from '../src/api/screen/resources.ts';
+import { resourceRequest, resourceCellText } from '../src/api/screen/resources.ts';
 import { createScreenBridge } from '../src/api/screen/bridge.ts';
 import { createScenario } from '../src/data/scenario.ts';
 const form = { type:'차량', name:'검증 자원', qty:1, base:'31', status:'대기' };
@@ -56,4 +56,15 @@ test('admin bridge binds real resource mutations, prevents duplicate writes and 
     await bridge.changeResource('update',row.id,{...form,name:'saved but refresh failed'});
     assert.deepEqual(S.resources,known);
   }finally{release();bridge.dispose();globalThis.document=previous;}
+});
+
+test('resource popup blanks only missing display values and preserves real zero and original facts',()=>{
+  const facts={org:'정보 미제공',count:null,zero:0,flag:false};
+  const original=structuredClone(facts);
+  for(const value of [null,undefined,'정보 미제공',NaN,Infinity]) assert.equal(resourceCellText(value),'');
+  assert.equal(resourceCellText(facts.zero),'0');
+  assert.equal(resourceCellText(facts.flag),'false');
+  assert.equal(resourceCellText('0'),'0');
+  assert.equal(resourceCellText('정보 미제공 사유를 포함한 실제 명칭'),'정보 미제공 사유를 포함한 실제 명칭');
+  assert.deepEqual(facts,original);
 });

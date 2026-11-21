@@ -324,3 +324,27 @@
     margin-inline: min(1px, 2%);
   }
 }
+
+/* Resource QA: reserve compact numeric columns; give the removed affiliation space to names. */
+#lp-body table.resource-grid th:nth-child(1),
+#lp-body table.resource-grid th:nth-child(3),
+#lp-body table.resource-grid th:nth-child(4) {
+  width: 44px;
+}
+#lp-body table.resource-grid th:nth-child(2),
+#lp-body table.resource-grid td:nth-child(2) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+@media (max-width: 600px) {
+  /* This popup must not shrink to the map's remaining width beside the sidebar. */
+  #left-panel {
+    position: fixed;
+    z-index: 9;
+    left: 8px;
+    top: calc(var(--app-header-height, 70px) + 8px);
+    max-width: calc(100vw - 16px);
+    max-height: calc(100dvh - var(--app-header-height, 70px) - 16px);
+  }
+}

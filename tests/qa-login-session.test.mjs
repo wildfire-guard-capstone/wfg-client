@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAuthSession, AUTH_STATE_KEY } from '../src/api/auth-session.ts';
-import { demoAccount } from '../src/api/demo-accounts.ts';
+import { demoAccount, demoAccountError } from '../src/api/demo-accounts.ts';
 
 function storage() {
   const data = new Map();
@@ -57,4 +57,18 @@ test('explicit public demo mode maps exactly four accounts; disabled mode never 
   assert.equal(demoAccount({},'commander'),null);
   assert.equal(demoAccount({VITE_DEMO_ACCOUNTS:'true'},'commander'),null);
   assert.equal(demoAccount(env,'__proto__'),null);
+});
+
+test('demo build settings tolerate flag whitespace but never supply a password without explicit valid configuration',()=>{
+  const env={VITE_DEMO_ACCOUNTS:' TRUE ',VITE_DEMO_PASSWORD:'synthetic-demo-password'};
+  assert.equal(demoAccount(env,'commander').loginId,'demo_cmd');
+  assert.equal(demoAccountError(env),'');
+  for(const password of [undefined,'','  ']) {
+    const missing={VITE_DEMO_ACCOUNTS:'true',VITE_DEMO_PASSWORD:password};
+    assert.equal(demoAccount(missing,'commander'),null);
+    assert.ok(demoAccountError(missing).includes('자동 입력 설정'));
+  }
+  assert.equal(demoAccountError({}),'');
+  assert.equal(demoAccountError({VITE_DEMO_ACCOUNTS:'false'}),'');
+  assert.equal(demoAccount({...env,VITE_DEMO_ACCOUNTS:'false'},'viewer'),null);
 });

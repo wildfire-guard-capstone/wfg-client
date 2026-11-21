@@ -101,3 +101,20 @@ test('demo autofill remains editable; invalid credentials show an error and neve
   expect(await page.evaluate(()=>window.__mock?.state.role)).toBeNull();
   expect(api.calls.filter(c=>c.path.endsWith('/auth/me'))).toHaveLength(0);
 });
+
+test('initial role autofills immediately and switching all roles remains editable without local authentication',async({page})=>{
+  const api=await server(page);await page.goto('/');
+  await expect(page.locator('#login-role')).toHaveValue('commander');
+  await expect(page.locator('#login-id')).toHaveValue('demo_cmd');
+  expect(await page.locator('#login-pw').inputValue()===password).toBe(true);
+  for(const [role,id] of Object.entries(ids)) {
+    await page.locator('#login-role').selectOption(role);
+    await expect(page.locator('#login-id')).toHaveValue(id);
+    expect(await page.locator('#login-pw').inputValue()===password).toBe(true);
+  }
+  await page.locator('#login-id').fill('manual-id');await page.locator('#login-pw').fill('synthetic-manual-password');
+  await expect(page.locator('#login-id')).toHaveValue('manual-id');
+  expect(await page.locator('#login-pw').inputValue()==='synthetic-manual-password').toBe(true);
+  expect(api.calls.some(c=>c.path.endsWith('/auth/login'))).toBe(false);
+  expect(await page.evaluate(()=>window.__mock?.state.role)).toBeNull();
+});
