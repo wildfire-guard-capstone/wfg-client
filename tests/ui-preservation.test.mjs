@@ -48,6 +48,13 @@ test('original components, CSS, map models and scenario data stay unchanged outs
               .replace("  const demo = demoAccount(import.meta.env, 'commander');\n  const legacy = !import.meta.env.VITE_API_MODE;\n", '')
               .replace("defaultValue={demo?.loginId ?? (legacy ? 'cmd01' : '')}", 'defaultValue="cmd01"')
               .replace("defaultValue={demo?.password ?? (legacy ? '1234' : '')}", 'defaultValue="1234"')
+          : file === 'src/components/IncidentPanel.tsx'
+            ? readFileSync(new URL(file, root), 'utf8')
+              .replace("          <details id=\"hist-box\">\n            <summary>{'제안서 버전 이력'}</summary>\n            <div id=\"hist-runs\"></div>\n          </details>\n", '')
+              .replace("<div id=\"prop-summary\" style={{ display: 'none' }}></div>", "<div id=\"prop-summary\"></div>\n          <details id=\"hist-box\">\n            <summary>{'제안서 버전 이력'}</summary>\n            <div id=\"hist-runs\"></div>\n          </details>")
+              .replace("<div id=\"prop-meta\" style={{ display: 'none' }}>", '<div id="prop-meta">')
+              .replace("{'진화'}", "{'진화 (S1~S7)'}")
+              .replace("{'대피'}", "{'대피 (E1~E7)'}")
           : file === 'src/components/MapToolbar.tsx'
             ? readFileSync(new URL(file, root), 'utf8')
               .replace(/className="blue lyr-btn off"(\s+data-layer="(?:water|routes)")/g, 'className="blue lyr-btn"$1')
