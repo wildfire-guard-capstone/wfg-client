@@ -17,7 +17,6 @@ import { villageEvacuated, evacuationText } from '../api/screen/incidents';
 import { overviewOfficialStage, overviewCoordinates } from '../api/screen/incident-overview';
 import { retainMapData, mapRenderData, type MapWindow, type MapMarker } from '../api/screen/maps';
 import { createScreenBridge, type ScreenBridge } from '../api/screen/bridge';
-import { PROPOSAL_CODES } from '../api/screen/proposals';
 import { screenMockOptions } from '../api/screen/mock-seed';
 import {
   NULL_TEXT,
@@ -2842,31 +2841,12 @@ export function createMockRuntime() {
     focusTargets(null); // 카드를 다시 그리면 지도 강조도 지운다
     const st = IS(),
       run = st.viewRun,
-      isCurrent = run === st.currentRun,
       closed = inc().status === '종료';
-    // API 모드(2026-11-18): 진화 · 대피 탭의 항목 범위는 서버 계약 항목(S1~S6 · E1~E6)으로.
-    // 시나리오 모드는 자체 목록(S1~S7 · E1~E7)이라 탭 글을 그대로 둔다
-    if (dataBridge)
-      $$('.ptabs .ptab').forEach((tab) => {
-        const codes = PROPOSAL_CODES.filter(
-          (code) => code[0] === (tab.dataset.axis === '진화' ? 'S' : 'E'),
-        );
-        tab.textContent = `${tab.dataset.axis} (${codes[0]}~${codes[codes.length - 1]})`;
-      });
     $('#prop-warn').innerHTML =
       st.proposalFailed && !closed
         ? `<div style="margin-bottom:6px">${warnHTML(run ? '새 대응 제안 정보를 가져오지 못했습니다' : '대응 제안 정보를 가져오지 못했습니다')}</div>`
         : '';
-    $('#prop-meta').innerHTML = run
-      ? `<b>${run.id}</b> · 생성 ${hhmm(run.createdAt)}(${esc(run.reason)}) · 기준 화선 <b>${perimTag(run.perim)}</b> · 공식 ${esc(run.snapshot.official_stage)} · 판정 <b>${esc(run.R.recStage)}</b>${isCurrent ? '' : ' <span class="badge b-없음">이전 버전</span> <a href="#" id="prop-latest">최신 버전으로</a>'}${closed ? ' <span class="badge b-종료">조회 전용</span>' : ''}`
-      : '';
-    const pl = $('#prop-latest');
-    if (pl)
-      pl.onclick = (e) => {
-        e.preventDefault();
-        st.viewRun = st.currentRun;
-        renderAll();
-      };
+    $('#prop-meta').innerHTML = '';
     const banner = $('#stage-banner');
     if (run && run.R.stageUp && !closed) {
       banner.classList.add('on');
@@ -2880,12 +2860,8 @@ export function createMockRuntime() {
     }
     const prevRun = st.runs[st.runs.indexOf(run) - 1] || null;
     const all = run.blocks.filter((b) => b.axis === state.axis);
-    const fired = all.filter((b) => b.status[0] !== '(없음)' && !b.apiMissing);
-    const active = (
-      dataBridge
-        ? all
-        : fired
-    ).filter((b) => state.filter === 'all' || b.status.includes(state.filter));
+    const active = all.filter((b) => b.apiState ? b.apiState !== 'NOT_TRIGGERED' : b.status[0] !== '(없음)')
+      .filter((b) => state.filter === 'all' || b.status.includes(state.filter));
     const card = (b) => {
       const changed = prevRun && run.changed.includes(b.id);
       const evid =
@@ -2900,15 +2876,13 @@ export function createMockRuntime() {
       const api = Boolean(b.apiSections);
       const basis = `<div class="detail">
             ${b.finding ? `<div class="row"><span class="k">판정 이유</span><span class="v">${esc(b.finding)}</span></div>` : ''}
-            ${b.targets.length ? `<div class="row"><span class="k">대상</span><span class="v">${esc(b.targets.join(', '))}</span></div>` : ''}
-            <div class="row"><span class="k">권한</span><span class="v">${esc(b.authority)}</span></div>
             <div class="row"><span class="k">근거</span><span class="v">${evid}</span></div>
           </div>
           ${canOperate() && !api ? `<div class="actions"><button class="ask-btn" data-id="${b.id}">이 항목 질문</button></div>` : ''}`;
       return `<div class="card axis-${b.axis}${api ? ' api open' : ''}" data-id="${b.id}">
         <div class="head"><span class="arrow">▶</span><span class="nm">${esc(b.name)}</span>${changed ? `<span class="chg-tag" data-chg="${b.id}" title="직전 버전 대비 변경 내용 보기">변경</span>` : ''}<span class="st">${badges(b.apiSections ? (b.apiState && b.apiState !== 'GENERATED' ? [({ PARTIAL: '부분 생성', FAILED: '생성 실패', NOT_TRIGGERED: '미발동', REUSED: '재사용' })[b.apiState]] : []) : b.status)}</span></div>
         <div class="sum">
-          <div class="text">${api ? sectionHTML(b.apiSections, b.apiChunks || {}, b.id, undefined, { gatherNotes: true }) + `<div class="card-basis fold" role="group" aria-label="판정 이유 · 근거"><button type="button" class="fold-toggle" aria-expanded="false">판정 이유 · 근거</button><div class="fold-body">${basis}</div></div>` + missingHTML(b.apiSections, b.withheld.map((w) => ({ field: w.slot, reason: w.why }))) : citeHTML(b.text, b.id)}</div>
+          <div class="text">${api ? sectionHTML(b.apiSections, b.apiChunks || {}, b.id, undefined, { gatherNotes: true, agencyPreview: b.id === 'S6' }) + `<div class="card-basis fold" role="group" aria-label="판정 이유 · 근거"><button type="button" class="fold-toggle" aria-expanded="false">판정 이유 · 근거</button><div class="fold-body">${basis}</div></div>` + missingHTML(b.apiSections, b.withheld.map((w) => ({ field: w.slot, reason: w.why }))) : citeHTML(b.text, b.id)}</div>
           ${b.apiSections ? '' : b.withheld.map((w) => `<div class="withheld"><b>${esc(w.slot)}</b> — ${richText(w.why || NO_EVIDENCE)}</div>`).join('')}
         </div>
         ${api ? '' : `<div class="body">${basis}</div>`}</div>`;
@@ -2945,6 +2919,11 @@ export function createMockRuntime() {
         t.setAttribute('aria-expanded', String(open));
       }),
     );
+    document.querySelectorAll<HTMLDetailsElement>('#cards details.agency-more').forEach((details) => {
+      details.addEventListener('toggle', () => {
+        details.querySelector('summary').textContent = details.open ? '접기' : details.dataset.more;
+      });
+    });
     $$('#cards .chg-tag').forEach((t) =>
       t.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -2964,18 +2943,7 @@ export function createMockRuntime() {
         openEvidence(run, c.dataset.b, Number(c.dataset.k));
       }),
     );
-    // 구분 건수는 지금 보는 탭(진화/대피)의 발동 항목 기준
-    const s = Object.fromEntries(
-      ['즉시', '대기', '협의', '요청'].map((k) => [
-        k,
-        fired.filter((b) => b.status.includes(k)).length,
-      ]),
-    );
-    $('#prop-summary').innerHTML =
-      ['즉시', '대기', '협의', '요청']
-        .map((k) => `<span class="badge b-${k}">${k} ${s[k]}</span>`)
-        .join('') +
-      `<span style="margin-left:auto">${state.axis} ${all.length}항목 중 발동 ${fired.length}</span>`;
+    $('#prop-summary').innerHTML = '';
   }
   // 제안 항목의 대상 이름 → 지도 위치(마을·대피소·취약시설·국가유산·유관기관). 구역·자원처럼 위치가 없는 대상은 관련 마을로 대신
   function targetPoints(b, R) {

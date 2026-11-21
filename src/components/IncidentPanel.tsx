@@ -43,8 +43,12 @@ export const IncidentPanel = memo(function IncidentPanel() {
           <div className="btnrow" id="st-actions"></div>
         </div>
         <div id="ipt-proposal" className="ipt">
+          <details id="hist-box">
+            <summary>{'제안서 버전 이력'}</summary>
+            <div id="hist-runs"></div>
+          </details>
           <div id="prop-warn"></div>
-          <div id="prop-meta">{'—'}</div>
+          <div id="prop-meta" style={{ display: 'none' }}>{'—'}</div>
           <div id="stage-banner"></div>
           <div className="ptabs">
             <button
@@ -52,14 +56,14 @@ export const IncidentPanel = memo(function IncidentPanel() {
               data-axis="진화"
               onClick={(e) => act('setAxis', e.currentTarget)}
             >
-              {'진화 (S1~S7)'}
+              {'진화'}
             </button>
             <button
               className="ptab"
               data-axis="대피"
               onClick={(e) => act('setAxis', e.currentTarget)}
             >
-              {'대피 (E1~E7)'}
+              {'대피'}
             </button>
           </div>
           <div className="pfilters">
@@ -100,11 +104,7 @@ export const IncidentPanel = memo(function IncidentPanel() {
             </button>
           </div>
           <div id="cards"></div>
-          <div id="prop-summary"></div>
-          <details id="hist-box">
-            <summary>{'제안서 버전 이력'}</summary>
-            <div id="hist-runs"></div>
-          </details>
+          <div id="prop-summary" style={{ display: 'none' }}></div>
         </div>
       </div>
       <div id="evidence-drawer">

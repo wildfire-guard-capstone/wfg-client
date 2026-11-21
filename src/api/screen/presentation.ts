@@ -121,12 +121,34 @@ function inlineHTML(
   return html;
 }
 type Table = Extract<TextPart, { type: 'table' }>;
+/** The API's agency cell is a comma/line-break list, not a new DTO field.
+ * Keep parenthesized commas within a name; never split ambiguous prose such as 또는. */
+function agencyCell(value: string, render: (value: string) => string): string {
+  const text = value.replace(/<br\s*\/?\s*>/gi, '\n');
+  const names: string[] = [];
+  let start = 0, depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    if ('([{'.includes(text[i]!)) depth++;
+    if (')]}'.includes(text[i]!)) depth = Math.max(0, depth - 1);
+    if (!depth && /[,，\r\n]/.test(text[i]!)) {
+      if (text.slice(start, i).trim()) names.push(text.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  if (text.slice(start).trim()) names.push(text.slice(start).trim());
+  if (depth || names.length <= 3) return render(value);
+  const label = `외 ${names.length - 3}개 더 보기`;
+  return names.slice(0, 3).map(render).join('<br>') +
+    `<details class="agency-more" data-more="${label}"><summary>${label}</summary><div>` +
+    names.slice(3).map(render).join('<br>') + '</div></details>';
+}
 function tableHTML(
   table: Table,
   blockId?: string,
   other?: Table,
   side?: Difference['side'],
   format: string = table.format,
+  agencyPreview = false,
 ): string {
   const cell = (value: string, previous?: string) =>
     inlineHTML(value, blockId, side ? { text: previous, side } : undefined);
@@ -154,7 +176,11 @@ function tableHTML(
           '<tr>' +
           row
             .map(
-              (value, c) => '<td>' + cell(value, other?.rows[r]?.[c]) + '</td>',
+              (value, c) => {
+                const agency = agencyPreview && /^세부\s*대상\s*\(기관명\)$/.test(table.head?.[c]?.trim() ?? '');
+                return '<td' + (agency ? ' style="overflow-wrap:anywhere;white-space:normal"' : '') + '>' +
+                  (agency ? agencyCell(value, (name) => cell(name)) : cell(value, other?.rows[r]?.[c])) + '</td>';
+              },
             )
             .join('') +
           '</tr>',
@@ -240,6 +266,8 @@ type DetailBlock = NonNullable<
 export interface SectionOptions {
   /** ※ 안내(note)를 섹션에 두지 않고 빼 둔다 — missingHTML이 「빠진 정보」 한 곳에 모은다 */
   gatherNotes?: boolean;
+  /** Only the S6 on-screen agency table; comparisons and evidence stay complete. */
+  agencyPreview?: boolean;
 }
 /** 접기 단추(누르는 동작은 createMockRuntime이 `.fold-toggle`에 붙인다) */
 const foldToggle = (open: boolean, text: string) =>
@@ -384,6 +412,7 @@ export function sectionHTML(
           : undefined,
         comparison?.side,
         'dto',
+        Boolean(options.agencyPreview && blockId === 'S6' && !fixed),
       );
     const prose = proseHTML(
       block.text,
