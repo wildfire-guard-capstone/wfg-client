@@ -307,6 +307,19 @@ export interface Village {
   pop0_14_est: number | null;
   houses_est: number | null;
 }
+/** Backend administrative-ri records: geom is inferred, never an official boundary. */
+export interface AdminVillage {
+  id: Id;
+  village_id: Id;
+  name: string;
+  seq: number;
+  hall_name?: string | null;
+  hall_source?: string | null;
+  hall_point: Point | null;
+  houses_est: number | null;
+  attrs: JsonObject;
+  geometry: MultiPolygon | null;
+}
 export interface Facility {
   id: Id;
   type: FacilityType;
@@ -328,14 +341,15 @@ export interface MapFeature {
   geometry: Geometry;
   attrs: JsonObject;
 }
-export type MapEntityType = 'village' | 'facility' | 'map_feature' | 'resource_base' | 'admin_area';
+export type MapEntityType = 'village' | 'admin_village' | 'facility' | 'map_feature' | 'resource_base' | 'admin_area';
 export interface MapEntityDetail {
   entity_type: MapEntityType;
-  entity: Village | Facility | MapFeature | ResourceBase | AdminArea;
+  entity: Village | AdminVillage | Facility | MapFeature | ResourceBase | AdminArea;
 }
 export type MapProperties =
   | AdminArea
   | (Omit<Village, 'geometry' | 'label_point'> & { label_point?: Point })
+  | Omit<AdminVillage, 'geometry'>
   | Omit<Facility, 'geometry'>
   | Omit<MapFeature, 'geometry'>;
 export type MapFeatures = FeatureCollection<Geometry, MapProperties> & {

@@ -1658,7 +1658,7 @@ export function createMockRuntime() {
       if (controller.signal.aborted) return;
       if (result.entity_type !== marker.entity || result.entity.id !== marker.id) throw new Error('[필요한 정보: 선택한 지도 대상과 일치하는 상세 응답]');
       entityPopup?.remove();
-      entityPopup = popup(marker.position, `<b>${esc(result.entity.name || '[필요한 정보: 지도 대상명]')}</b> <span style="color:#666">${esc(marker.entity === 'village' ? `${marker.kind} · ${evacuationText(villageEvacuated(inc(), marker.id))}` : marker.kind)}</span>`);
+      entityPopup = popup(marker.position, `<b>${esc((marker.entity === 'admin_village' ? marker.name : result.entity.name) || '[필요한 정보: 지도 대상명]')}</b> <span style="color:#666">${esc(marker.entity === 'village' ? `${marker.kind} · ${evacuationText(villageEvacuated(inc(), marker.id))}` : marker.kind)}</span>`);
     } catch (error) {
       if (!controller.signal.aborted) failNotice(`지도 상세 조회 실패${error.status ? ` (HTTP ${error.status})` : ''}: ${error.message}`);
     }

@@ -37,8 +37,15 @@ export function mapRenderData(snapshot: MapWindow) {
     if (!position) continue;
     const emd = names.get(p.admin_area_id) ?? needed('마을 소속 읍면동명');
     villages.push({ id: p.id, name: p.name, emd, lng: position[0], lat: position[1], pop: p.population, hh: NaN, elderly: p.pop65_est ?? NaN, disabled: NaN });
-    markers.push({ key: `v:${p.id}`, id: p.id, entity: 'village', name: p.name, kind: `${emd} 마을`, cls: 'village', icon: 'house', position });
+    // Label points locate a legal village, not a community facility. Keep its facts only.
   }
+  const communityLocations = new Set<string>();
+  const communityMarker = (id: string, entity: 'facility' | 'admin_village', name: string, kind: string, position: LngLat) => {
+    const identity = JSON.stringify([name.replace(/\s+/g, ''), position]);
+    if (communityLocations.has(identity)) return;
+    communityLocations.add(identity);
+    markers.push({ key: `v:${entity}:${id}`, id, entity, name, kind, cls: 'village', icon: 'house', position });
+  };
   for (const feature of get('facilities')) {
     const p = feature.properties as Omit<C.Facility, 'geometry'>;
     const position = mapPosition(feature.geometry);
@@ -57,14 +64,31 @@ export function mapRenderData(snapshot: MapWindow) {
       facilities.push({ id: p.id, name: p.name, type, lng, lat, capacity: p.capacity ?? NaN, real: true });
       key = `f:${p.id}`; cls = icon = type; kind = p.type === 'HERITAGE' ? '국가유산' : p.type === 'HOSPITAL' ? '의료시설' : '취약시설';
     }
-    markers.push({ key, id: p.id, entity: 'facility', name: p.name, kind, cls, icon, position });
+    // Community halls retain their original facility/shelter facts and API identity.
+    // Never place a facility icon at a polygon vertex or at a village label point.
+    const community = typeof p.name === 'string' && p.name.trim() &&
+      (/^(마을회관|경로당|노인정|노인복지회관|노인복지관)$/.test(p.subtype) ||
+       /마을회관|경로당|노인정|노인복지(?:회관|관)/.test(p.name));
+    if (community) {
+      if (feature.geometry.type === 'Point') communityMarker(p.id, 'facility', p.name, p.subtype || '마을 공동시설', position);
+    } else markers.push({ key, id: p.id, entity: 'facility', name: p.name, kind, cls, icon, position });
+  }
+  for (const feature of get('admin_villages')) {
+    const p = feature.properties as Omit<C.AdminVillage, 'geometry'>;
+    // Older EC2 responses lack hall_name: do not relabel a ri name as a hall.
+    const position = p.hall_point?.type === 'Point' ? mapPosition(p.hall_point) : null;
+    if (position && typeof p.hall_name === 'string' && p.hall_name.trim())
+      communityMarker(p.id, 'admin_village', p.hall_name, '마을 회관', position);
   }
   for (const feature of get('water')) {
     const p = feature.properties as C.MapFeature, position = mapPosition(feature.geometry);
     if (position) markers.push({ key: `w:${p.id}`, id: p.id, entity: 'map_feature', name: p.name ?? needed('담수지명'), kind: '담수지(저수지)', cls: 'water', icon: 'drop', position });
   }
   const mapped = (id: string, entity: C.MapEntityType, transform: (p: Record<string, unknown>) => object = (p) => p) => get(id).map((f) => ({ ...f, properties: { ...transform(f.properties as unknown as Record<string, unknown>), api_entity_type: entity, api_entity_id: String(f.properties.id) } }));
-  const boundaries = collection(mapped('admin_areas', 'admin_area', (p) => ({ ...p, level: String(p.level).toLowerCase() })));
+  // MAP-02 villages are official legal-ri polygons. Administrative-ri geom is
+  // K-means-derived and must never be presented as an official boundary.
+  const boundaries = collection(mapped('villages', 'village').filter((f) =>
+    f.geometry?.type === 'Polygon' || f.geometry?.type === 'MultiPolygon'));
   const roads = collection([...mapped('road', 'map_feature'), ...mapped('track', 'map_feature')].map((f) => {
     const p = f.properties as Record<string, unknown>, attrs = p.attrs as C.JsonObject | undefined;
     return { ...f, properties: { ...p, kind: attrs?.highway ?? p.kind, ref: attrs?.ref } };
