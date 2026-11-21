@@ -14,6 +14,7 @@ import type {
 import { createApiClientFromEnv } from '../api/environment';
 import { createApiDataSource, type ApiDataSource } from '../api/data-source';
 import { villageEvacuated, evacuationText } from '../api/screen/incidents';
+import { overviewOfficialStage, overviewCoordinates } from '../api/screen/incident-overview';
 import { retainMapData, mapRenderData, type MapWindow, type MapMarker } from '../api/screen/maps';
 import { createScreenBridge, type ScreenBridge } from '../api/screen/bridge';
 import { PROPOSAL_CODES } from '../api/screen/proposals';
@@ -2452,15 +2453,15 @@ export function createMockRuntime() {
     if (dataBridge) {
       const status = dataBridge.dataState('now'), w = dataBridge.weather();
       if (!w) return esc(stateText(status, '현재 기상'));
-      return `${esc(apiWeatherText())}<br><span class="small muted">${esc(w.source || '출처 미제공')} · 관측 ${fmtIso(w.observed_at)}${w.stale ? ' · 갱신 지연, 마지막 관측값' : ''}${status !== 'ready' ? ' · ' + esc(stateText(status, '현재 기상')) : ''}</span>`;
+      const notices = [w.stale ? '갱신 지연, 마지막 관측값' : '', status !== 'ready' ? stateText(status, '현재 기상') : ''].filter(Boolean);
+      return `${esc(apiWeatherText())}${notices.length ? `<br><span class="small muted">${esc(notices.join(' · '))}</span>` : ''}`;
     }
     const w = wx();
     const value =
       `${esc(wxText(w))}` +
       (!dataBridge && S.weather.warnings.length
         ? ` · <b style="color:var(--red)">${esc(S.weather.warnings.join('·'))}</b>`
-        : '') +
-      `<br><span class="small muted">${esc(dataBridge ? dataBridge.weather()?.source || NULL_TEXT : S.weather.source)} ${esc(dataBridge ? NULL_TEXT : S.weather.base_time)} 발표 · 수신 ${fmtIso(dataBridge ? dataBridge.weather()?.observed_at : S.weather.received_at)} · ${esc(dataBridge ? NULL_TEXT : w.t)} 기준</span>`;
+        : '');
     return S.weather.fetch_status === 'failed'
       ? `${warnHTML('기상 정보를 가져오지 못했습니다')}<div class="stale">${value}</div>`
       : value;
@@ -2498,10 +2499,9 @@ export function createMockRuntime() {
         ? NULL_TEXT
         : '—';
   const perimHTML = (I) => {
-    const p = curPerim(I),
-      n = (I.perimeters || []).length;
+    const p = curPerim(I);
     return p
-      ? `<b>${perimTag(p)}</b> · ${fmt1(ringAreaHa(p.ring))} ha · 꼭짓점 ${apiVertexCount(p.ring)}개 <span class="small muted">(${fmtIso(p.at)} ${esc(p.by || '')} ${esc(p.source || '')}${n > 1 ? ` · 이전 버전 ${n - 1}개 보존` : ''})</span>`
+      ? `<b>${perimTag(p)}</b> · ${fmt1(ringAreaHa(p.ring))} ha · 꼭짓점 ${apiVertexCount(p.ring)}개`
       : dataBridge
         ? esc(stateText(dataBridge.dataState('perimeters'), '실측 화선'))
         : '<span class="muted">미보고</span>';
@@ -2543,7 +2543,7 @@ export function createMockRuntime() {
       st = IS();
     if ($('#inc-drawer').classList.contains('on')) renderIncList();
     $('#st-detail').innerHTML = `<table class="grid">
-      <tr><td class="k">발생 장소</td><td colspan="3">${esc(I.addr)}<br><span class="small muted num">발화 위치 ${I.ignition[1].toFixed(5)}, ${I.ignition[0].toFixed(5)}</span></td></tr>
+      <tr><td class="k">발생 장소</td><td colspan="3">${esc(I.addr)}<br><span class="small muted num">${esc(overviewCoordinates(I.ignition))}</span></td></tr>
       <tr><td class="k">발생 일시</td><td>${I.start_time ? fmtIso(I.start_time) : '<span class="muted">미확인</span>'}</td><td class="k">신고 접수</td><td>${fmtIso(I.report_time)}</td></tr>
       <tr><td class="k">신고 내용</td><td colspan="3">${richText(I.report_text || '신고 내용 미입력')}</td></tr>
       <tr><td class="k">신고자</td><td colspan="3">${callerHTML(I)}</td></tr>
@@ -2554,10 +2554,10 @@ export function createMockRuntime() {
         )
         .join('')}
       <tr><td class="k">접수 기록</td><td colspan="3">${intakeHTML(I)}</td></tr>
-      <tr><td class="k">진행상태</td><td>${stBadge(I.status)}${I.ended_at ? ` <span class="small muted">종료 ${fmtIso(I.ended_at)}${I.ended_by ? ' · ' + esc(I.ended_by) : ''}</span>` : ''}</td><td class="k">공식 단계</td><td>${esc(I.official_stage)} · ${esc(I.alert_level)}</td></tr>
+      <tr><td class="k">진행상태</td><td>${stBadge(I.status)}${I.ended_at ? ` <span class="small muted">종료 ${fmtIso(I.ended_at)}${I.ended_by ? ' · ' + esc(I.ended_by) : ''}</span>` : ''}</td><td class="k">공식 단계</td><td>${esc(overviewOfficialStage(I.official_stage))}</td></tr>
       <tr><td class="k">기상</td><td colspan="3">${weatherHTML()}</td></tr>
       <tr><td class="k">실측 화선</td><td colspan="3">${perimHTML(I)}</td></tr>
-      ${I.status === '종료' ? '' : `<tr><td class="k">예측</td><td colspan="3">${st.predicted ? `${fmt0(predAreaHa(st, 4))} ha(5h) · ${fmt0(predAreaHa(st, 7))} ha(8h) <span class="small muted">기준 화선 ${perimTag(st.predPerim)}</span>${st.stale ? ' <span class="badge b-대기">재예측 필요</span>' : ''}` : `<span class="muted">${dataBridge ? esc(stateText(dataBridge.dataState('prediction'), '예측 결과')) + ' · ' + esc(stateText(dataBridge.dataState('slices'), '예측 도형')) : '예측 전'}</span>`}</td></tr>`}
+      ${I.status === '종료' ? '' : `<tr><td class="k">예측</td><td colspan="3">${st.predicted ? `${fmt0(predAreaHa(st, 4))} ha(5h) · ${fmt0(predAreaHa(st, 7))} ha(8h)${st.stale ? ' <span class="badge b-대기">재예측 필요</span>' : ''}` : `<span class="muted">${dataBridge ? esc(stateText(dataBridge.dataState('prediction'), '예측 결과')) + ' · ' + esc(stateText(dataBridge.dataState('slices'), '예측 도형')) : '예측 전'}</span>`}</td></tr>`}
     </table>`;
     $$('#st-detail .merged-fly').forEach(
       (a) =>
@@ -5023,10 +5023,10 @@ export function createMockRuntime() {
       )
         cells[1].textContent = '[필요한 정보: 기관별 접수 이력]';
       if (cells[2]?.textContent === '공식 단계')
-        cells[3].title = '[필요한 정보: 공식 발령 단계·위기경보]';
+        cells[3].title = '[필요한 정보: 공식 발령 단계]';
       if (cells[0]?.textContent === '발생 장소' && missing) {
         const coordinates = cells[1].querySelector('span');
-        if (coordinates) coordinates.textContent = `발화 위치 ${NULL_TEXT}`;
+        if (coordinates) coordinates.textContent = overviewCoordinates(null);
       }
     });
     $$('#inc-list .muted').forEach((element) => {
