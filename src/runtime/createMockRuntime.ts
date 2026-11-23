@@ -3934,7 +3934,7 @@ export function createMockRuntime() {
     const cp = I ? curPerim(I) : null,
       all = I ? I.perimeters || [] : [];
     $('#rep-perim-cur').innerHTML = cp
-      ? `현재 <b>${perimTag(cp)}</b> · ${fmt1(ringAreaHa(cp.ring))} ha · ${fmtIso(cp.at)} ${esc(cp.by || '')} (${esc(cp.source || '')})${
+      ? `현재 <b>${perimTag(cp)}</b> · ${fmt1(ringAreaHa(cp.ring))} ha · ${fmtIso(cp.at)}${dataBridge ? '' : ` ${esc(cp.by || '')} (${esc(cp.source || '')})`}${
           all.length > 1
             ? `<br><span class="muted">이전 버전: ${all
                 .filter((p) => p !== cp)
@@ -4010,6 +4010,9 @@ export function createMockRuntime() {
     $$('#rep-panel .invalid').forEach((el) => el.classList.remove('invalid'));
     if (map && state.markers['pick']) {
       const el = state.markers['pick'].getElement();
+      // QA 2-6: 저장된 산불의 발화 위치는 '발화점', 새 보고에서 고르는 중일 때만 '입력 중'
+      const label = el.querySelector('.lb');
+      if (label) label.textContent = I ? '발화점' : '발화 위치(입력 중)';
       if (I) {
         state.markers['pick'].setLngLat(I.ignition);
         el.style.display = '';
@@ -4213,6 +4216,9 @@ export function createMockRuntime() {
       name: $('#rep-cname').value.trim(),
       phone: $('#rep-cphone').value.trim(),
     };
+    // QA 2-4: 신고 기관명과 신고자 성명 중 하나는 꼭 받는다
+    mark('#rep-cname', !!(caller.org || caller.name), '신고 기관명·신고자 성명 중 하나');
+    $('#rep-corg').classList.toggle('invalid', !(caller.org || caller.name));
     // 연락처는 비워 둘 수 있으나, 적었다면 숫자·하이픈(가린 번호는 *) 형식만 받는다
     mark(
       '#rep-cphone',
@@ -5282,6 +5288,7 @@ export function createMockRuntime() {
         reportForm: loadRepForm,
         admin: renderAdmin,
         notice: failNotice,
+        toast: (message) => toast(message, 3200),
         loginError: (message) => {
           $('#login-err').textContent = message;
         },

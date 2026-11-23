@@ -213,7 +213,8 @@ export interface IncidentCreateRequest {
   ignition_point: Point;
   address: string;
   reported_at: DateTime;
-  reporter_name: string;
+  /** 신고 기관명(reporter_org)과 둘 중 하나는 필수(QA 2-4). */
+  reporter_name: string | null;
   reporter_phone: string;
   started_at?: DateTime | null;
   report_text?: string | null;

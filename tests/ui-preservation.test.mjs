@@ -35,6 +35,8 @@ test('original components, CSS, map models and scenario data stay unchanged outs
             .replace(`<button id="rep-draw-done" onClick`, `<button id="rep-draw-done" disabled onClick`)
             .replace(`\n        <label className="p1-observed">{'화선 관측시각 (실제 측정 시각)'}<input id="rep-observed" type="datetime-local" /></label>`, '')
             // QA 2-1: 산불명은 서버가 만들고 입력받지 않아 칸을 뺐다. 화면은 발생 장소로 산불을 가리킨다.
+            // QA 2-4: 신고 기관명·신고자 성명 중 하나 필수 안내.
+            .replace(`{' 신고자 정보 (기관명·성명 중 하나 필수) '}`, `{' 신고자 정보 '}`)
             .replace(`<div className="form">\n          <label className="w">\n            {'발생 장소(주소) *'}`, `<div className="form">\n          <label className="w">\n            {'산불명 *'}\n            <input id="rep-name" />\n          </label>\n          <label className="w">\n            {'발생 장소(주소) *'}`)
           : file === 'src/runtime/MockRuntimeProvider.tsx'
             ? readFileSync(new URL(file, root), 'utf8')

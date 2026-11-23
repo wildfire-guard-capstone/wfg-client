@@ -82,7 +82,7 @@ export const ReporterPanel = memo(function ReporterPanel() {
             <textarea id="rep-text"></textarea>
           </label>
         </div>
-        <div className="sec">{' 신고자 정보 '}</div>
+        <div className="sec">{' 신고자 정보 (기관명·성명 중 하나 필수) '}</div>
         <div className="form">
           <label className="w">
             {'신고 기관명'}

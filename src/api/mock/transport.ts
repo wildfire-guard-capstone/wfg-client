@@ -682,7 +682,12 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
             ignition_point: point as unknown as C.Incident['ignition_point'],
             address: requiredString(body, 'address'),
             reported_at: dateTime(body, 'reported_at'),
-            reporter_name: requiredString(body, 'reporter_name'),
+            reporter_name:
+              typeof body.reporter_name === 'string' && body.reporter_name.trim()
+                ? body.reporter_name
+                : typeof body.reporter_org === 'string' && body.reporter_org.trim()
+                  ? null
+                  : invalid('reporter_name', '신고 기관명과 신고자 성명 중 하나가 필요합니다.'),
             reporter_phone: requiredString(body, 'reporter_phone'),
             started_at:
               body.started_at == null ? null : dateTime(body, 'started_at'),
