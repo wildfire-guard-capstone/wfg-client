@@ -1110,7 +1110,7 @@ export function createScreenBridge(
               : '';
           const displayed = incidentDetailsView(existing, []);
           const changed =
-            rp.intake.length > 0 ||
+            JSON.stringify(rp.intake) !== JSON.stringify(displayed.intake) ||
             input('rep-start') !== localInputDate(existing.started_at) ||
             input('rep-report') !== localInputDate(existing.reported_at) ||
             input('rep-addr') !== existing.address ||
@@ -1175,10 +1175,6 @@ export function createScreenBridge(
             if (index >= 0) S.incidents[index] = incidentDetailsView(updated, [...rows.filter(p => p.id !== savedPerimeter!.id), savedPerimeter]);
           }
         } else {
-          if (rp.intake.length)
-            throw new Error(
-              '기관별 접수 기록은 현재 명세에 없습니다. 접수 기록 입력을 지운 뒤 보고해주세요.',
-            );
           const lng = Number(input('rep-lng')),
             lat = Number(input('rep-lat'));
           if (
@@ -1201,6 +1197,12 @@ export function createScreenBridge(
             throw new Error(
               '발생 장소·접수 일시·신고자 성명·연락처가 필요합니다.',
             );
+          // 기관별 접수 기록(11/23): 화면은 시:분만 받으므로 날짜는 신고 접수 일시를 따른다
+          const intakeRecords = rp.intake.map((r) => ({
+            org_name: r.org,
+            received_at: new Date(`${input('rep-report').slice(0, 10)}T${r.at}`).toISOString(),
+            channel: r.channel || null,
+          }));
           const response = await source.api.incidents.report({
             body: {
               ignition_point: { type: 'Point', coordinates: [lng, lat] },
@@ -1213,6 +1215,7 @@ export function createScreenBridge(
               reporter_org: input('rep-corg') || null,
               reporter_name: input('rep-cname'),
               reporter_phone: input('rep-cphone'),
+              ...(intakeRecords.length ? { intake_records: intakeRecords } : {}),
               ...(rp.ring
                 ? {
                     initial_perimeter: {
@@ -1257,7 +1260,7 @@ export function createScreenBridge(
           state.incId = id;
           host.selected(id);
           host.reportForm(id);
-          host.notice('서버 응답으로 보고 내용을 갱신했습니다. 산불명은 서버가 생성하며 접수 기록은 전송하지 않습니다.');
+          host.notice('서버 응답으로 보고 내용을 갱신했습니다.');
         } else host.notice(`산불 ${id}의 보고가 저장됐습니다. 현재 선택과 입력 내용은 유지했습니다.`);
       });
     } finally {

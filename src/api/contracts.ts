@@ -152,6 +152,18 @@ export interface Perimeter {
   corrected_at: DateTime | null;
   area_ha: number;
 }
+/** 기관별 접수 기록 1줄(INC-02 요청 · INC-03 응답, 11/23). */
+export interface IntakeRecord {
+  id: Id;
+  org_name: string;
+  received_at: DateTime;
+  channel: string | null;
+}
+export interface IntakeRecordRequest {
+  org_name: string;
+  received_at: DateTime;
+  channel?: string | null;
+}
 export interface Incident {
   id: Id;
   name: string;
@@ -179,6 +191,8 @@ export interface Incident {
   proposal_stale: boolean;
   situation_revision: string;
   running_operation_id: string | null;
+  /** 접수 기록을 저장하기 전 서버는 이 칸을 보내지 않는다. 없으면 빈 목록으로 본다. */
+  intake_records?: IntakeRecord[];
 }
 export interface IncidentSummary {
   id: Id;
@@ -205,6 +219,7 @@ export interface IncidentCreateRequest {
   report_text?: string | null;
   reporter_org?: string | null;
   initial_perimeter?: InitialPerimeter | null;
+  intake_records?: IntakeRecordRequest[];
 }
 export interface ExpectedPerimeterRequest {
   expected_perimeter_id: Id;

@@ -169,8 +169,14 @@ test('reporter submits only contracted new-report fields; MultiPolygon and holes
     'rep-lat': '36.365',
     'rep-cname': '테스트 보고자',
     'rep-cphone': '010-0000-0000',
+    'rep-report': '2026-11-23T13:40',
   }))
     await page.locator(`#${id}`).fill(value);
+  // 기관별 접수 기록(11/23): 화면의 시:분은 신고 접수 날짜에 붙여 보낸다
+  await page.locator('#ik-org').fill('의성소방서');
+  await page.locator('#ik-at').fill('13:32');
+  await page.locator('#ik-ch').fill('119 신고');
+  await page.locator('#ik-add').click();
   const geometry = {
     type: 'MultiPolygon',
     coordinates: [
@@ -221,11 +227,22 @@ test('reporter submits only contracted new-report fields; MultiPolygon and holes
   )!.body!;
   expect(body).not.toHaveProperty('name');
   expect(body).not.toHaveProperty('intake');
+  expect(body.intake_records).toEqual([
+    {
+      org_name: '의성소방서',
+      received_at: new Date('2026-11-23T13:32').toISOString(),
+      channel: '119 신고',
+    },
+  ]);
   expect(body).not.toHaveProperty('official_stage');
   expect((body.initial_perimeter as { geometry: unknown }).geometry).toEqual(
     geometry,
   );
   await expect(page.locator('#rep-addr')).toHaveValue('경북 의성군 보고 시험');
+  // 저장된 접수 기록은 서버 응답으로 다시 보이고, 고칠 수 없다
+  await expect(page.locator('#rep-intake')).toContainText('의성소방서');
+  await expect(page.locator('#rep-intake .ik-del')).toHaveCount(0);
+  await expect(page.locator('#rep-panel .intake-add')).toBeHidden();
   expect(errors).toEqual([]);
 });
 

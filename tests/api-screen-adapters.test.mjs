@@ -151,6 +151,20 @@ test('official stage and reception history are never populated from judged stage
   assert.deepEqual(view.intake, []);
   assert.equal(view.caller.org, '제공된 신고 기관');
 });
+test('saved intake records map to the screen rows; an older server without the field is an empty list', () => {
+  const raw = createFixtures()['INC-03'];
+  const at = new Date('2026-11-23T13:32').toISOString();
+  raw.intake_records = [
+    { id: '1', org_name: '의성소방서', received_at: at, channel: '119 신고' },
+    { id: '2', org_name: '의성군 산림과', received_at: at, channel: null },
+  ];
+  assert.deepEqual(incidentView(raw, []).intake, [
+    { org: '의성소방서', at: '13:32', channel: '119 신고' },
+    { org: '의성군 산림과', at: '13:32', channel: '' },
+  ]);
+  delete raw.intake_records;
+  assert.deepEqual(incidentView(raw, []).intake, []);
+});
 test('missing resource summary is NULL; an empty successful summary is a real zero; individual crew is absent', () => {
   assert.equal(resourceCounts(null).헬기.대기, NULL_TEXT);
   const empty = resourceCounts({
