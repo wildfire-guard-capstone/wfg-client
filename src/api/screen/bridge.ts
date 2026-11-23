@@ -13,7 +13,7 @@ import { createIdempotencyKey } from '../client.ts';
 import { waitForOperation, validateOperation } from '../operations.ts';
 import { remote } from '../data-source.ts';
 import { incidentDetailsView, incidentListRow } from './incidents.ts';
-import { eventView } from './events.ts';
+import { eventViews } from './events.ts';
 import { resourceRequest } from './resources.ts';
 import { validateAssistant } from './assistant.ts';
 import {
@@ -519,7 +519,10 @@ export function createScreenBridge(
     }
     if (logTicket === eventTicket) {
       if (logs?.status === 'ready') {
-        state.events = logs.data.map(eventView).reverse();
+        // 정정은 서버 로그(SITUATION_CORRECTED)에 정정 문장만 붙인다 — 따로 행을 만들면 중복된다.
+        state.events = eventViews(logs.data, {
+          corrections: corrections?.status === 'ready' ? corrections.data : [],
+        }).reverse();
         eventStatus = 'ready';
         errors.delete(`${incidentId}.logs`);
       } else if (logs?.status === 'error') {
@@ -528,19 +531,6 @@ export function createScreenBridge(
         host.notice(`이벤트 로그 조회 실패: ${error(logs.error)}`);
       }
     }
-    if (corrections?.status === 'ready')
-      for (const row of corrections.data)
-        if (!state.events.some((e) => e.text.includes(`COR-${row.id}`)))
-          state.events.push({
-            t: new Date(row.created_at).toLocaleTimeString('ko-KR', {
-              hour12: false,
-              timeZone: 'Asia/Seoul',
-            }),
-            kind: '정정',
-            text: `COR-${row.id} ${row.input_text}`,
-            inc: row.incident_id,
-            user: row.user_id,
-          });
     if (messages?.status === 'ready' && messageTicket === chatTicket) {
       const log = document.getElementById('chat-log')!;
       log.textContent = '';
