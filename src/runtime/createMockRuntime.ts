@@ -2955,6 +2955,13 @@ export function createMockRuntime() {
     $$('#cards .chg-tag').forEach((t) =>
       t.addEventListener('click', (e) => {
         e.stopPropagation();
+        // 이전 버전이 목록에만 있고 내용을 아직 불러오지 않았으면 먼저 불러온다(2026-11-24: 이전 쪽이 「발동하지 않음」으로 나왔음)
+        if (dataBridge && prevRun && prevRun.apiLoaded === false) {
+          void dataBridge.loadRun(prevRun).then((loaded) => {
+            if (loaded) showItemDiff(loaded, run, t.dataset.chg);
+          });
+          return;
+        }
         showItemDiff(prevRun, run, t.dataset.chg);
       }),
     );
@@ -3167,6 +3174,23 @@ export function createMockRuntime() {
           citation.onclick = () => openEvidence(side === 0 ? prev : run, citation.dataset.b, Number(citation.dataset.k));
         });
       });
+    });
+    // 비교 창 안의 접기 · 「모두 보기」(한쪽에만 있는 항목은 카드처럼 접힌 채 그려진다 — 2026-11-24: 눌러도 펼쳐지지 않았음)
+    $$('#modal-body .fold-toggle').forEach((t) => {
+      t.onclick = (e) => {
+        e.stopPropagation();
+        const open = t.closest('.fold').classList.toggle('open');
+        t.setAttribute('aria-expanded', String(open));
+      };
+    });
+    $$('#modal-body .list-toggle').forEach((b) => {
+      b.onclick = (e) => {
+        e.stopPropagation();
+        const all = b.nextElementSibling as HTMLElement | null;
+        if (!all) return;
+        all.hidden = !all.hidden;
+        b.textContent = all.hidden ? b.dataset.more : '▾ 접기';
+      };
     });
   }
   // 「제안 변경사항」 창: 직전 버전 대비 바뀐 항목 전체(이전 문장 → 이후 문장)
