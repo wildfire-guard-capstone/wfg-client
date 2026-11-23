@@ -31,6 +31,7 @@ import {
   submissionGeometry,
   text,
   versionView,
+  type ScreenRun,
 } from './adapters.ts';
 
 export interface ScreenHost {
@@ -902,6 +903,22 @@ export function createScreenBridge(
       }
     });
   }
+  /**
+   * 버전 목록에만 있는 이전 버전(versionView, apiLoaded false)의 내용을 불러와 채운다 — 보는 버전은 바꾸지 않는다.
+   * 「변경」 태그의 항목 비교가 쓴다(2026-11-24: 불러오지 않은 이전 버전이라 이전 쪽이 「발동하지 않음」으로 나왔다).
+   */
+  async function loadRun(run: ScreenRun): Promise<ScreenRun | null> {
+    if (run.apiLoaded !== false) return run;
+    if (!run.apiId || pendingIncident) return null;
+    const id = state.incId;
+    const loaded = await task(async (signal, epoch) => {
+      const proposal = await source.proposal(id, run.apiId!, signal);
+      if (!alive(epoch) || state.incId !== id || pendingIncident) return null;
+      Object.assign(run, proposalView(proposal, S, run.perim ?? null, run.seq));
+      return run;
+    });
+    return loaded ?? null;
+  }
   async function compare(run: ProposalRun) {
     if (!run.apiId || pendingIncident || state.role !== 'commander') return;
     const id = state.incId;
@@ -1357,6 +1374,7 @@ export function createScreenBridge(
     predict,
     end,
     viewVersion,
+    loadRun,
     compare,
     sendChat,
     saveReport,

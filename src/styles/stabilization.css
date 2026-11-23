@@ -425,7 +425,8 @@
   overflow-wrap: anywhere;
 }
 .proposal-table th {
-  overflow-wrap: break-word;
+  /* 좁은 창에서 긴 표 머리(「기지(발화지에서 거리)」)가 표를 5px 넘기던 것 — 모자랄 때만 끊는다(운영 확인 11-24) */
+  overflow-wrap: anywhere;
   vertical-align: middle;
 }
 /* 이름이 넷 이상인 칸: 앞 3개 + 「외 N개 더 보기」(카드 안 표) */
