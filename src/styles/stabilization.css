@@ -337,6 +337,11 @@
   overflow-wrap: anywhere;
   word-break: normal;
 }
+/* QA 3-1: 좁은 '공식 단계' 칸의 안내 문구는 낱말 중간이 아니라 띄어쓰기에서 줄을 바꾼다 */
+#st-detail .stage-note {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
 @media (max-width: 600px) {
   /* This popup must not shrink to the map's remaining width beside the sidebar. */
   #left-panel {
