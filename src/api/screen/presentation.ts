@@ -147,6 +147,14 @@ const LIST_MIN = 6; // 이름이 이만큼 넘게 이어지면 문장에서 줄�
 const LIST_SHOW = 3;
 // 마지막 이름 뒤에 붙는 조사(「…안전센터에 송전선 …」)
 const LAST_NAME = /^(.+?)(에게|에서|으로|에|과|와|은|는|을|를|의|로)(?=\s)/;
+// 「N곳」은 받침으로 끝나므로 조사를 맞춘다(운영 확인: 「구미소방서 등 8곳를」)
+const AFTER_GOT: Record<string, string> = { 를: '을', 는: '은', 와: '과', 로: '으로' };
+// 기관 · 장소 이름의 끝말(괄호 덧말 「(6.3 km)」 「(안동소방서)」는 떼고 본다). 이름이 대부분일 때만 「N곳」으로 줄인다
+// (운영 확인: 「현재 인원, 편성, 인솔자 지정 여부 …」 같은 항목 나열까지 「7곳」으로 줄였음)
+const PLACE_END =
+  /(?:소방서|센터|지역대|관리소|항공대|헬기|경찰서|보건소|병원|의료원|학교|공사|공단|본부|상황실|청|소|서|대|리|면|읍|동|군|시|구|도|원|관|실|단|팀|국|사|당|교)$/;
+const placeLike = (name: string) =>
+  PLACE_END.test(name.trim().replace(/(?:\s*\([^()]*\))+$/, '').trim());
 /**
  * 문장 속 긴 이름 나열(괄호 밖 「, 」 또는 「 · 」로 6개 이상)을 「앞 3개 등 N곳」으로 줄인다.
  * → { text: 줄인 글, names: 모든 이름 } · 줄일 것이 없으면 null. 서버 글은 그대로 두고 화면에서만 줄인다(이름을 잃지 않음).
@@ -164,14 +172,20 @@ export function shortenList(
       const last = parts[parts.length - 1]!;
       const m = LAST_NAME.exec(last);
       // 가운데가 이름처럼 짧지 않으면(문장 나열) 줄이지 않는다
-      if (!m || parts.slice(1, -1).some((p) => p.length > 60 || /[.?!]/.test(p))) continue;
+      // 「(14.2 km)」의 소수점은 문장 끝이 아니다 — 마침표 뒤가 공백 · 끝일 때만 문장으로 본다
+      if (!m || parts.slice(1, -1).some((p) => p.length > 60 || /[.?!](?:\s|$)/.test(p))) continue;
+      const all = [parts[0]!.trim(), ...parts.slice(1, -1).map((p) => p.trim()), m[1]!.trim()];
+      // 첫 조각은 앞말이 붙을 수 있어 가운데 · 마지막 이름으로 본다: 80% 이상이 기관 · 장소 이름일 때만
+      const rest = all.slice(1);
+      // 마지막 이름은 꼭 이름이어야 한다(「…방하리 주민은」을 「등 6곳은」으로 줄이면 「주민」이 사라짐)
+      if (!placeLike(m[1]!) || rest.filter(placeLike).length < rest.length * 0.8) continue;
       changed = true;
-      names.push(parts[0]!.trim(), ...parts.slice(1, -1).map((p) => p.trim()), m[1]!.trim());
+      names.push(...all);
       const join = sep.source.includes('·') ? ' · ' : ', ';
       return (
         parts.slice(0, LIST_SHOW).join(join) +
         ` 등 ${parts.length}곳` +
-        m[2] +
+        (AFTER_GOT[m[2]!] ?? m[2]) +
         last.slice(m[0].length)
       );
     }

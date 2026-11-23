@@ -133,3 +133,16 @@ test('긴 이름 나열은 「앞 3개 등 N곳」 + 모두 보기, 짧은 나�
   const fixed = sectionHTML(sections, { 'SM-1': 3 }, 'S2', { sections, chunks: { 'SM-1': 3 }, side: 'after' });
   assert.ok(!fixed.includes('list-toggle') && fixed.includes('구미소방서, 상주소방서'));
 });
+
+test('긴 나열 줄이기: 「곳」 뒤 조사를 맞추고, 장소가 아닌 항목 나열은 줄이지 않는다(운영 확인 11-24)', async () => {
+  const { shortenList } = await import('../src/api/screen/presentation.ts');
+  const s = shortenList('의성소방서, 안동소방서, 구미소방서, 상주소방서, 문경소방서, 의성군 임차헬기(서부)(14.2 km), 경북 119 항공대를 즉시 동원하십시오.');
+  assert.equal(s.text, '의성소방서, 안동소방서, 구미소방서 등 7곳을 즉시 동원하십시오.');
+  assert.equal(shortenList('현재 인원, 편성, 인솔자 지정 여부, 비상연락망, 책임자, 통신망, 안전 상태에 대한 정보가 없다.'), null);
+  // 마지막 조각이 이름이 아니면(「방하리 주민은」) 줄이지 않는다 — 「주민」이 사라지지 않게
+  assert.equal(shortenList('괴산리 · 석탑리 · 신안리 · 신월리 · 철파리 · 방하리 주민은 대피소로 이동하십시오.'), null);
+  assert.equal(
+    shortenList('괴산리 · 석탑리 · 신안리 · 신월리 · 철파리 · 방하리에 대피명령을 발령하십시오.').text,
+    '괴산리 · 석탑리 · 신안리 등 6곳에 대피명령을 발령하십시오.',
+  );
+});
