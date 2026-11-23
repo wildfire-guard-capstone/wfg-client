@@ -169,6 +169,53 @@
   padding-left: 16px;
   margin: 2px 0;
 }
+/* 소제목 형식(2026-11-24 BLUF): 「제안」 상자(펼침) → 「현황」 → 「판단 근거」 → 「출처」 → 「누락된 정보」.
+   소제목에는 번호를 붙이지 않고, 두 소제목 사이에 구분선을 두지 않는다(사용자) */
+.proposal-actions.bluf {
+  background: #f6f9ff;
+  border: 1px solid #c9d8f2;
+  border-left: 3px solid var(--blue);
+  border-radius: 2px;
+  margin-top: 4px;
+  padding: 4px 8px 6px;
+}
+.proposal-parts > .proposal-facts,
+.proposal-parts > .proposal-basis {
+  border-top: 1px solid var(--line);
+  margin-top: 6px;
+  padding-top: 4px;
+}
+.proposal-part + .proposal-part {
+  margin-top: 6px;
+}
+.part-subtitle {
+  display: block;
+  margin: 2px 0 3px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #1e2a36;
+}
+.proposal-section p.proposal-reason {
+  margin: 0 0 3px;
+  font-weight: 600;
+  color: #1e2a36;
+}
+.proposal-step + .proposal-step {
+  margin-top: 4px;
+}
+.proposal-basis > .fold-body,
+.proposal-facts > .fold-body {
+  color: #333;
+}
+.detail-cap {
+  font-weight: 700;
+  color: #555;
+  margin: 4px 0 2px;
+}
+.card-sources .src-list .ev {
+  display: block;
+  margin: 2px 0;
+}
 .prop-cat {
   font-size: 10.5px;
   padding: 0 4px;

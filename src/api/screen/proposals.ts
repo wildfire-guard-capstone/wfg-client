@@ -70,14 +70,20 @@ function validSections(item: Proposal['items'][number]): boolean {
     if (b.type === 'table') return Array.isArray(b.head) && b.head.every(str) && Array.isArray(b.rows) && b.rows.every(r=>Array.isArray(r) && r.every(str));
     return false;
   };
+  const kinds = ['facts', 'part', 'notes'];
   return str(item.finding) && (item.withheld == null || Array.isArray(item.withheld) && item.withheld.every(w=>w && str(w.field) && str(w.reason))) &&
-    item.evidence.every(e=>e && str(e.chunk_id)) && item.sections.every(s=>s && str(s.title) && Array.isArray(s.blocks) && s.blocks.every(b=>{
+    item.evidence.every(e=>e && str(e.chunk_id)) && item.sections.every(s=>s && str(s.title) && Array.isArray(s.blocks) &&
+      (s.kind == null || kinds.includes(s.kind)) && s.blocks.every(b=>{
       if (!b) return false;
       // 제안 문단의 자세한 자료(details, 2026-11-18)는 목록 · 표만
       if (b.type === 'paragraph') return str(b.body) && Array.isArray(b.evidence) && b.evidence.every(str) &&
         (b.details == null || Array.isArray(b.details) && b.details.every(d=>d && data(d)));
       if (b.type === 'fact') return str(b.text) && ['situation', 'status', 'judgment'].includes(b.step);
       if (b.type === 'list' || b.type === 'table') return data(b);
+      // 소제목 형식(2026-11-24): 핵심 판단 근거 · 판단 근거 문장 · 자세히 보기(목록 · 표)
+      if (b.type === 'reason') return str(b.text);
+      if (b.type === 'basis') return Array.isArray(b.sentences) && b.sentences.every(x=>x && str(x.text) && Array.isArray(x.evidence) && x.evidence.every(str));
+      if (b.type === 'detail') return typeof b.show === 'boolean' && Array.isArray(b.blocks) && b.blocks.every(d=>d && data(d));
       return (b.type === 'note' || b.type === 'failed') && str(b.text);
     }));
 }

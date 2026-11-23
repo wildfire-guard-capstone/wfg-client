@@ -366,12 +366,20 @@ export function sectionHTML(
             )
         : line;
     }
+    // 소제목 형식(2026-11-24) 자세히 보기의 목록 · 표는 작은 제목(caption)을 가질 수 있다
+    const caption =
+      (block.type === 'list' || block.type === 'table') &&
+      'caption' in block &&
+      block.caption
+        ? '<div class="detail-cap">' + escapeHTML(block.caption) + '</div>'
+        : '';
     if (block.type === 'list') {
       const tag =
         block.style === 'ordered' || block.style === 'numbered' ? 'ol' : 'ul';
       // 줄마다 이미 번호(①, 1.)가 있으면 자동 번호를 끈다(「1. ① 인명」처럼 겹치지 않게)
       const own = block.rows.every((row) => OWN_NUMBER.test(row.text));
       return (
+        caption +
         '<' +
         tag +
         (own ? ' class="list-plain"' : '') +
@@ -394,7 +402,7 @@ export function sectionHTML(
       );
     }
     if (block.type === 'table')
-      return tableHTML(
+      return caption + tableHTML(
         {
           type: 'table',
           format: 'markdown',
@@ -414,11 +422,14 @@ export function sectionHTML(
         'dto',
         Boolean(options.agencyPreview && blockId === 'S6' && !fixed),
       );
+    // 소제목 형식의 판단 근거 · 자세히 보기는 partsHTML이 그린다(예전 배치에는 오지 않음)
+    if (block.type === 'basis' || block.type === 'detail') return '';
     const prose = proseHTML(
       block.text,
       blockId,
       diff(
-        old && (old.type === 'note' || old.type === 'failed')
+        old &&
+          (old.type === 'note' || old.type === 'failed' || old.type === 'reason')
           ? old.text
           : undefined,
       ),
@@ -432,6 +443,149 @@ export function sectionHTML(
   // 옛 제안서(네 단계 전)의 「대응 제안」 섹션 제목은 지금 화면 말인 「제안」으로
   const title = (value?: string) =>
     value?.replace(/^\s*\d+\.\s*/, '').replace(/^대응 제안$/, '제안');
+  /**
+   * 소제목 형식(서버 2026-11-24 BLUF, 섹션에 kind가 있음): 「제안」(펼침 — 소제목 → 핵심 판단 근거 「…므로,」 →
+   * 제안 문장(구분 태그 · 출처 번호) → 「자세히 보기」(LLM이 show로 고른 것만, 접힘)) → 「현황」(상황 · 상태 · 파악을
+   * 소제목 계층으로, 접힘) → 「판단 근거」(소제목별 문장 · 출처 번호, 접힘). 소제목에 번호를 붙이지 않는다(안 나오는
+   * 소제목이 있으므로). ※ 안내(notes 섹션)는 missingHTML이 「누락된 정보」로 모은다. 버전 비교(fixed)는 모두 펼쳐 그린다.
+   */
+  const partsHTML = (): string => {
+    const diff = diffOf(comparison?.side);
+    const refs = (ids: string[], table: Record<string, number>) =>
+      ids
+        .filter(
+          (id) =>
+            Object.hasOwn(table, id) &&
+            Number.isInteger(table[id]) &&
+            table[id]! > 0,
+        )
+        .map((id) => '[' + table[id] + ']');
+    const facts = sections.find((section) => section.kind === 'facts');
+    const parts = sections.filter((section) => section.kind === 'part');
+    const oldFacts = comparison?.sections.find((s) => s.kind === 'facts');
+    const oldPart = (section: ProposalSection) =>
+      comparison?.sections.find(
+        (s) => s.kind === 'part' && s.title === section.title,
+      );
+    const of = <T extends Block['type']>(
+      section: ProposalSection | undefined,
+      type: T,
+    ) =>
+      (section?.blocks ?? []).filter(
+        (b): b is Extract<Block, { type: T }> => b.type === type,
+      );
+    const subtitle = (value: string, old?: string) =>
+      value
+        ? '<b class="part-subtitle">' +
+          inlineHTML(value, undefined, diff(old)) +
+          '</b>'
+        : '';
+    const actions = parts
+      .map((section) => {
+        const old = oldPart(section);
+        const reason = of(section, 'reason')[0];
+        const oldReason = of(old, 'reason')[0];
+        const oldParas = of(old, 'paragraph');
+        const detail = of(section, 'detail')[0];
+        const oldDetail = of(old, 'detail')[0];
+        return (
+          '<div class="proposal-part">' +
+          subtitle(title(section.title) ?? '', title(old?.title)) +
+          (reason
+            ? '<p class="proposal-reason">' +
+              inlineHTML(
+                reason.text + ',',
+                blockId,
+                diff(oldReason ? oldReason.text + ',' : undefined),
+              ) +
+              '</p>'
+            : '') +
+          of(section, 'paragraph')
+            .map((p, i) => blockHTML(p, oldParas[i]))
+            .join('') +
+          (detail && detail.blocks.length && (detail.show || fixed)
+            ? foldHTML(
+                'prop-detail',
+                '자세히 보기',
+                detail.blocks
+                  .map((d, i) => blockHTML(d, oldDetail?.blocks[i]))
+                  .join(''),
+                false,
+                fixed,
+              )
+            : '') +
+          '</div>'
+        );
+      })
+      .join('');
+    const failed = of(facts, 'failed')
+      .map((b) => blockHTML(b, undefined))
+      .join('');
+    const step = (name: string, label: string) => {
+      const b = of(facts, 'fact').find((x) => x.step === name);
+      if (!b) return '';
+      const o = of(oldFacts, 'fact').find((x) => x.step === name);
+      return (
+        '<div class="proposal-step">' +
+        subtitle(label) +
+        blockHTML(b, o) +
+        '</div>'
+      );
+    };
+    const status =
+      step('situation', '상황') + step('status', '상태') + step('judgment', '파악');
+    const basis = parts
+      .map((section) => {
+        const b = of(section, 'basis')[0];
+        if (!b || !b.sentences.length) return '';
+        const ob = of(oldPart(section), 'basis')[0];
+        const sentences = b.sentences
+          .map((s, i) => {
+            const o = ob?.sentences[i];
+            return (
+              '<span class="basis-sent">' +
+              inlineHTML(
+                withCitations(s.text, refs(s.evidence, chunks)),
+                blockId,
+                diff(
+                  o
+                    ? withCitations(
+                        o.text,
+                        refs(o.evidence, comparison?.chunks ?? {}),
+                      )
+                    : undefined,
+                ),
+              ) +
+              '</span>'
+            );
+          })
+          .join(' ');
+        return (
+          '<div class="proposal-part">' +
+          subtitle(title(section.title) ?? '') +
+          '<p>' +
+          sentences +
+          '</p></div>'
+        );
+      })
+      .join('');
+    const notes = options.gatherNotes
+      ? ''
+      : sections
+          .filter((section) => section.kind === 'notes')
+          .flatMap((section) => section.blocks)
+          .map((b) => blockHTML(b, undefined))
+          .join('');
+    return (
+      '<section class="proposal-section proposal-parts">' +
+      foldHTML('proposal-actions bluf', '제안', actions + failed, true, fixed) +
+      (status ? foldHTML('proposal-facts', '현황', status, false, fixed) : '') +
+      (basis ? foldHTML('proposal-basis', '판단 근거', basis, false, fixed) : '') +
+      notes +
+      '</section>'
+    );
+  };
+  if (sections.some((section) => section.kind)) return partsHTML();
   return sections
     .map((section, s) => {
       const previous = comparison?.sections[s];
@@ -516,9 +670,10 @@ export function missingHTML(
     ),
   ];
   if (!rows.length) return '';
+  // 이름(2026-11-24 사용자): 「빠진 정보」 → 「누락된 정보」
   return foldHTML(
     'proposal-missing',
-    '빠진 정보',
+    '누락된 정보',
     '<ul>' + rows.map((row) => '<li>' + row + '</li>').join('') + '</ul>',
     false,
     false,

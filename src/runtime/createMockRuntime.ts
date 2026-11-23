@@ -2888,15 +2888,19 @@ export function createMockRuntime() {
       // API 제안서 카드(2026-11-18): 처음엔 펼친 채, 머리(▶)를 누르면 카드 전체가 접힌다.
       // 판정 이유 · 근거는 카드 안 「판정 이유 · 근거」 접기로(근거 번호 누르기는 그대로), 「이 항목 질문」 단추는 두지 않는다
       const api = Boolean(b.apiSections);
+      // 소제목 형식(서버 2026-11-24 BLUF): 제안 → 현황 → 판단 근거 → 출처 → 누락된 정보. 출처 = 카드의 근거 원문 목록
+      // (파란 네모 번호, 누르면 오른쪽 출처 창), 판정 이유 줄은 두지 않는다(목업 · 사용자 형식)
+      const bluf = api && b.apiSections.some((s) => s.kind);
+      const sources = `<div class="card-basis card-sources fold" role="group" aria-label="출처"><button type="button" class="fold-toggle" aria-expanded="false">출처</button><div class="fold-body"><div class="src-list">${evid}</div></div></div>`;
       const basis = `<div class="detail">
             ${b.finding ? `<div class="row"><span class="k">판정 이유</span><span class="v">${esc(b.finding)}</span></div>` : ''}
-            <div class="row"><span class="k">근거</span><span class="v">${evid}</span></div>
+            <div class="row"><span class="k">출처</span><span class="v">${evid}</span></div>
           </div>
           ${canOperate() && !api ? `<div class="actions"><button class="ask-btn" data-id="${b.id}">이 항목 질문</button></div>` : ''}`;
       return `<div class="card axis-${b.axis}${api ? ' api open' : ''}" data-id="${b.id}">
         <div class="head"><span class="arrow">▶</span><span class="nm">${esc(b.name)}</span>${changed ? `<span class="chg-tag" data-chg="${b.id}" title="직전 버전 대비 변경 내용 보기">변경</span>` : ''}<span class="st">${badges(b.apiSections ? (b.apiState && b.apiState !== 'GENERATED' ? [({ PARTIAL: '부분 생성', FAILED: '생성 실패', NOT_TRIGGERED: '미발동', REUSED: '재사용' })[b.apiState]] : []) : b.status)}</span></div>
         <div class="sum">
-          <div class="text">${api ? sectionHTML(b.apiSections, b.apiChunks || {}, b.id, undefined, { gatherNotes: true, agencyPreview: b.id === 'S6' }) + `<div class="card-basis fold" role="group" aria-label="판정 이유 · 근거"><button type="button" class="fold-toggle" aria-expanded="false">판정 이유 · 근거</button><div class="fold-body">${basis}</div></div>` + missingHTML(b.apiSections, b.withheld.map((w) => ({ field: w.slot, reason: w.why }))) : citeHTML(b.text, b.id)}</div>
+          <div class="text">${api ? sectionHTML(b.apiSections, b.apiChunks || {}, b.id, undefined, { gatherNotes: true, agencyPreview: b.id === 'S6' }) + (bluf ? (b.evidence.length ? sources : '') : `<div class="card-basis fold" role="group" aria-label="판정 이유 · 출처"><button type="button" class="fold-toggle" aria-expanded="false">판정 이유 · 출처</button><div class="fold-body">${basis}</div></div>`) + missingHTML(b.apiSections, b.withheld.map((w) => ({ field: w.slot, reason: w.why }))) : citeHTML(b.text, b.id)}</div>
           ${b.apiSections ? '' : b.withheld.map((w) => `<div class="withheld"><b>${esc(w.slot)}</b> — ${richText(w.why || NO_EVIDENCE)}</div>`).join('')}
         </div>
         ${api ? '' : `<div class="body">${basis}</div>`}</div>`;
@@ -2955,6 +2959,14 @@ export function createMockRuntime() {
       c.addEventListener('click', (e) => {
         e.stopPropagation();
         openEvidence(run, c.dataset.b, Number(c.dataset.k));
+        // 이름(2026-11-24 사용자): 근거 → 출처. openEvidence는 원본 보존 대상이라 제목만 여기서 바꾼다
+        const t = $('#ev-title');
+        if (t) t.textContent = t.textContent.replace(/^근거 — /, '출처 — ');
+        // 소제목 형식 카드: 창 위 「그 문장」 = 실제로 누른 문장(판단 근거 문장 · 제안 문장). openEvidence는 글에서
+        // 그 번호가 처음 나오는 곳을 찾아 여러 문장이 함께 나오거나 다른 소제목 문장이 나왔다
+        const line = c.closest<HTMLElement>('.proposal-parts .basis-sent, .proposal-parts p');
+        const box = $('#ev-body .ev-sentence');
+        if (line && box) box.innerHTML = line.innerHTML;
       }),
     );
     $('#prop-summary').innerHTML = '';

@@ -274,22 +274,29 @@ export function proposalView(
         };
         return { k: index + 1, key, chunk: ev.chunk_id };
       });
+      const cited = (ids: string[]) =>
+        ids
+          .map((chunk) => refs.find((r) => r.chunk === chunk)?.k)
+          .filter((k) => k !== undefined)
+          .map((k) => `[${k}]`)
+          .join('');
+      type Flat = C.ProposalBlock | C.DetailBlock;
+      const lines = (block: Flat): string[] => {
+        if (block.type === 'paragraph') return [block.body + cited(block.evidence)];
+        if (block.type === 'table')
+          return [
+            block.head.join(' · '),
+            ...block.rows.map((row) => row.join(' · ')),
+          ];
+        if (block.type === 'list') return block.rows.map((row) => row.text);
+        // 소제목 형식(2026-11-24): 판단 근거는 문장마다 출처 번호를 붙여(출처 창이 그 문장을 찾는다), 자세히 보기는 펼쳐서
+        if (block.type === 'basis')
+          return block.sentences.map((s) => s.text + cited(s.evidence));
+        if (block.type === 'detail') return block.blocks.flatMap(lines);
+        return [block.text];
+      };
       const paragraphs = item.sections.flatMap((section) =>
-        section.blocks.flatMap((block) => {
-          if (block.type === 'paragraph') {
-            const citations = block.evidence
-              .map((chunk) => refs.find((r) => r.chunk === chunk)?.k)
-              .filter((k) => k !== undefined);
-            return [block.body + citations.map((k) => `[${k}]`).join('')];
-          }
-          if (block.type === 'table')
-            return [
-              block.head.join(' · '),
-              ...block.rows.map((row) => row.join(' · ')),
-            ];
-          if (block.type === 'list') return block.rows.map((row) => row.text);
-          return [block.text];
-        }),
+        section.blocks.flatMap(lines),
       );
       return {
         ...base,
