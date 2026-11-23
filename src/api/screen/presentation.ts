@@ -123,6 +123,75 @@ function inlineHTML(
 type Table = Extract<TextPart, { type: 'table' }>;
 /** The API's agency cell is a comma/line-break list, not a new DTO field.
  * Keep parenthesized commas within a name; never split ambiguous prose such as 또는. */
+/** 괄호 밖 구분자로 나눈다(괄호 안 쉼표는 이름의 일부). */
+function splitTop(text: string, sep: RegExp): string[] {
+  const out: string[] = [];
+  let depth = 0,
+    start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if ('([{'.includes(ch)) depth++;
+    if (')]}'.includes(ch)) depth = Math.max(0, depth - 1);
+    if (depth) continue;
+    const m = sep.exec(text.slice(i));
+    if (m && m.index === 0) {
+      out.push(text.slice(start, i));
+      i += m[0].length - 1;
+      start = i + 1;
+    }
+  }
+  out.push(text.slice(start));
+  return out;
+}
+const LIST_MIN = 6; // 이름이 이만큼 넘게 이어지면 문장에서 줄인다(2026-11-24 사용자 「가독성」)
+const LIST_SHOW = 3;
+// 마지막 이름 뒤에 붙는 조사(「…안전센터에 송전선 …」)
+const LAST_NAME = /^(.+?)(에게|에서|으로|에|과|와|은|는|을|를|의|로)(?=\s)/;
+/**
+ * 문장 속 긴 이름 나열(괄호 밖 「, 」 또는 「 · 」로 6개 이상)을 「앞 3개 등 N곳」으로 줄인다.
+ * → { text: 줄인 글, names: 모든 이름 } · 줄일 것이 없으면 null. 서버 글은 그대로 두고 화면에서만 줄인다(이름을 잃지 않음).
+ */
+export function shortenList(
+  text: string,
+): { text: string; names: string[] } | null {
+  const sentences = text.split(/(?<=[.?!])\s+/);
+  let changed = false;
+  const names: string[] = [];
+  const out = sentences.map((s) => {
+    for (const sep of [/^,\s*/, /^\s·\s/]) {
+      const parts = splitTop(s, sep);
+      if (parts.length < LIST_MIN) continue;
+      const last = parts[parts.length - 1]!;
+      const m = LAST_NAME.exec(last);
+      // 가운데가 이름처럼 짧지 않으면(문장 나열) 줄이지 않는다
+      if (!m || parts.slice(1, -1).some((p) => p.length > 60 || /[.?!]/.test(p))) continue;
+      changed = true;
+      names.push(parts[0]!.trim(), ...parts.slice(1, -1).map((p) => p.trim()), m[1]!.trim());
+      const join = sep.source.includes('·') ? ' · ' : ', ';
+      return (
+        parts.slice(0, LIST_SHOW).join(join) +
+        ` 등 ${parts.length}곳` +
+        m[2] +
+        last.slice(m[0].length)
+      );
+    }
+    return s;
+  });
+  return changed ? { text: out.join(' '), names } : null;
+}
+/** 줄인 나열의 「▸ N곳 모두 보기」(누르는 동작은 createMockRuntime renderProposal이 붙인다) */
+function listMoreHTML(names: string[], blockId: string): string {
+  const label = `▸ ${names.length}곳 모두 보기`;
+  return (
+    '<div class="list-more"><button type="button" class="list-toggle" data-more="' +
+    escapeHTML(label) +
+    '">' +
+    escapeHTML(label) +
+    '</button><div class="list-all" hidden>' +
+    names.map((n) => richText(n, blockId)).join(', ') +
+    '</div></div>'
+  );
+}
 /** 칸 글을 괄호 밖 쉼표 · 줄바꿈으로 나눈 이름 수(목록이 아니면 1). */
 function listCount(value: string): number {
   const text = value.replace(/<br\s*\/?\s*>/gi, '\n');
@@ -347,25 +416,33 @@ export function sectionHTML(
     old: Block | DetailBlock | undefined,
   ): string => {
     const diff = diffOf(comparison?.side);
-    if (block.type === 'fact')
-      return proseHTML(
-        block.text,
-        blockId,
-        diff(old?.type === 'fact' ? old.text : undefined),
-      );
-    if (block.type === 'paragraph') {
-      const line = withCategory(
-        block.category,
+    // 긴 이름 나열은 「앞 3개 등 N곳」 + 「N곳 모두 보기」(카드에서만 — 버전 비교 화면은 글 그대로)
+    const short = (text: string) => (fixed ? null : shortenList(text));
+    if (block.type === 'fact') {
+      const s = short(block.text);
+      return (
         proseHTML(
-          paragraph(block, chunks),
+          s ? s.text : block.text,
           blockId,
-          diff(
-            old?.type === 'paragraph'
-              ? paragraph(old, comparison!.chunks)
-              : undefined,
-          ),
-        ),
+          diff(old?.type === 'fact' ? old.text : undefined),
+        ) + (s ? listMoreHTML(s.names, blockId) : '')
       );
+    }
+    if (block.type === 'paragraph') {
+      const s = short(block.body);
+      const line =
+        withCategory(
+          block.category,
+          proseHTML(
+            paragraph(s ? { ...block, body: s.text } : block, chunks),
+            blockId,
+            diff(
+              old?.type === 'paragraph'
+                ? paragraph(old, comparison!.chunks)
+                : undefined,
+            ),
+          ),
+        ) + (s ? listMoreHTML(s.names, blockId) : '');
       // 그 제안의 자세한 자료(서버 2026-11-18 details): 문장 밑 「자세히 보기」, 처음엔 접힘
       const details = block.details ?? [];
       const oldDetails = old?.type === 'paragraph' ? (old.details ?? []) : [];
