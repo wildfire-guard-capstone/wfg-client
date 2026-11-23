@@ -410,3 +410,83 @@
 #hist-events th:first-child {
   width: 82px !important;
 }
+
+/* 가독성(2026-11-24 사용자): 제안 표는 열 너비를 내용에 맞춰 자동으로 정하고, 한국어는 어절 단위로만 줄을 바꾼다
+   (전에는 열 너비가 모두 같고 낱말 중간에서 줄이 바뀌어 기지 목록 칸이 아주 길어졌다) */
+.proposal-table table {
+  table-layout: auto;
+}
+.proposal-table th,
+.proposal-table td {
+  word-break: keep-all;
+}
+/* 띄어쓰기 없는 긴 이름(「의료법인영제의료재단영남제일병원」)만 칸에서 끊는다 — 표가 창보다 넓어지지 않게 */
+.proposal-table td {
+  overflow-wrap: anywhere;
+}
+.proposal-table th {
+  overflow-wrap: break-word;
+  vertical-align: middle;
+}
+/* 이름이 넷 이상인 칸: 앞 3개 + 「외 N개 더 보기」(카드 안 표) */
+.proposal-table td.cell-list {
+  min-width: 9em;
+}
+details.agency-more {
+  margin-top: 2px;
+}
+details.agency-more > summary {
+  cursor: pointer;
+  color: var(--blue);
+  font-size: 11.5px;
+  list-style: none;
+}
+details.agency-more > summary::before {
+  content: '▸ ';
+}
+details.agency-more[open] > summary::before {
+  content: '▾ ';
+}
+details.agency-more > summary::-webkit-details-marker {
+  display: none;
+}
+/* 왼쪽 창 너비 조절 손잡이(오른쪽 가장자리) */
+#side-resizer {
+  position: absolute;
+  top: 0;
+  right: -5px;
+  width: 10px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 30;
+  touch-action: none;
+}
+#side-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 2px;
+  background: transparent;
+  transition: background 0.15s;
+}
+#side-resizer:hover::after,
+#side-resizer:focus-visible::after,
+body.side-resizing #side-resizer::after {
+  background: var(--blue2, #3d6bc4);
+}
+#side-resizer:focus-visible {
+  outline: none;
+}
+body.side-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+/* 제안 상자 안 자세히 보기는 들여쓰지 않는다(좁은 창에서 표 자리를 넓힘 — 340px 창에서 표 칸이 206px뿐이었음) */
+.proposal-actions.bluf {
+  padding: 4px 6px 6px;
+}
+.proposal-actions.bluf .prop-detail {
+  margin-left: 0;
+}

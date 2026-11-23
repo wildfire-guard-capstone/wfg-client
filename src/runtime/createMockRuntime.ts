@@ -5230,6 +5230,88 @@ export function createMockRuntime() {
 
   lifecycle.listen(window, 'resize', syncAppLayout);
   syncAppLayout();
+  // 왼쪽 창 너비 조절(2026-11-24 사용자): 창 오른쪽 가장자리 손잡이를 끌어 넓히고 좁힌다(키보드 ← →, 두 번 누르면 원래 너비).
+  // 안의 카드 · 표는 너비에 맞춰 다시 흐른다. 너비는 이 브라우저에만 기억한다(저장소가 없어도 동작)
+  function installSideResize() {
+    const side = $('#side');
+    if (!side) return;
+    // 런타임을 다시 만들면(StrictMode · 재로그인) 앞 런타임의 손잡이는 이벤트가 풀린 채 남는다 — 지우고 새로 단다
+    side.querySelector('#side-resizer')?.remove();
+    const KEY = 'wfg-side-width';
+    // 하한 340px = 원래 창 최소 너비(app.css max(340px, 25vw)) — 이보다 좁으면 4열 표가 넘친다
+    const clamp = (w: number) =>
+      Math.round(Math.min(Math.max(w, 340), Math.max(360, window.innerWidth * 0.7)));
+    const apply = (w: number) => {
+      side.style.width = clamp(w) + 'px';
+    };
+    try {
+      const saved = Number(localStorage.getItem(KEY));
+      if (saved > 0) apply(saved);
+    } catch {
+      /* 저장소를 쓸 수 없으면 기본 너비 */
+    }
+    const handle = document.createElement('div');
+    handle.id = 'side-resizer';
+    handle.tabIndex = 0;
+    handle.title = '끌어서 왼쪽 창 너비 조절 · 두 번 누르면 원래 너비';
+    handle.setAttribute('role', 'separator');
+    handle.setAttribute('aria-orientation', 'vertical');
+    handle.setAttribute('aria-label', '왼쪽 창 너비 조절');
+    side.appendChild(handle);
+    const save = () => {
+      try {
+        localStorage.setItem(KEY, String(Math.round(side.getBoundingClientRect().width)));
+      } catch {
+        /* 기억하지 못해도 지금 너비는 유지 */
+      }
+    };
+    let startX = 0,
+      startW = 0,
+      dragging = false;
+    lifecycle.listen(handle, 'pointerdown', (e) => {
+      dragging = true;
+      startX = e.clientX;
+      startW = side.getBoundingClientRect().width;
+      handle.setPointerCapture(e.pointerId);
+      document.body.classList.add('side-resizing');
+      e.preventDefault();
+    });
+    lifecycle.listen(handle, 'pointermove', (e) => {
+      if (!dragging) return;
+      apply(startW + e.clientX - startX);
+      if (map) map.resize();
+    });
+    const end = () => {
+      if (!dragging) return;
+      dragging = false;
+      document.body.classList.remove('side-resizing');
+      save();
+      syncAppLayout();
+    };
+    lifecycle.listen(handle, 'pointerup', end);
+    lifecycle.listen(handle, 'pointercancel', end);
+    lifecycle.listen(handle, 'dblclick', () => {
+      side.style.width = '';
+      try {
+        localStorage.removeItem(KEY);
+      } catch {
+        /* 무시 */
+      }
+      syncAppLayout();
+    });
+    lifecycle.listen(handle, 'keydown', (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      apply(side.getBoundingClientRect().width + (e.key === 'ArrowRight' ? 24 : -24));
+      save();
+      syncAppLayout();
+      e.preventDefault();
+    });
+    // 창(브라우저)이 좁아지면 기억한 너비도 화면 안으로
+    lifecycle.listen(window, 'resize', () => {
+      if (side.style.width) apply(parseFloat(side.style.width));
+    });
+  }
+  installSideResize();
   const api = {
     get ready() { return ready; },
     restoreSession,

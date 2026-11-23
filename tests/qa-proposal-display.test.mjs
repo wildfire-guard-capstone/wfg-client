@@ -24,10 +24,14 @@ test('names with parenthesized commas and line breaks are safe; server tags neve
   assert.match(html,/외 1개 더 보기/);assert.match(html,/기관가\(구조, 구급\)/);
   assert.doesNotMatch(html,/<img/);assert.match(html,/&lt;img/);
 });
-test('other items, other table columns, evidence and comparison paths retain complete cells',()=>{
+test('comparison path retains complete cells; card tables of every item and column preview long lists (2026-11-24)',()=>{
   const dto=section('기관가, 기관나, 기관다, 기관라');
-  for(const [id,options,comparison] of [['S1',{agencyPreview:true},undefined],['S6',{},undefined],['S6',{agencyPreview:true},{sections:dto,chunks:{},side:'after'}]])
-    assert.doesNotMatch(sectionHTML(dto,{},id,comparison,options),/class="agency-more"/);
+  // 버전 비교 화면은 모두 펼친다
+  assert.doesNotMatch(sectionHTML(dto,{},'S6',{sections:dto,chunks:{},side:'after'},{agencyPreview:true}),/class="agency-more"/);
+  // 카드 안 표는 항목 · 열과 상관없이 이름이 넷 이상이면 앞 3개 + 더 보기(사용자 「가독성」)
+  for(const [id,options] of [['S1',{agencyPreview:true}],['S6',{}]])
+    assert.match(sectionHTML(dto,{},id,undefined,options),/class="agency-more"/);
   dto[0].blocks[0].details[0].head[1]='다른 열';
-  assert.doesNotMatch(sectionHTML(dto,{},'S6',undefined,{agencyPreview:true}),/class="agency-more"/);
+  assert.match(sectionHTML(dto,{},'S3',undefined,{}),/기관가<br>기관나<br>기관다<details class="agency-more"/);
+  assert.doesNotMatch(sectionHTML(section('기관가, 기관나, 기관다'),{},'S3',undefined,{}),/class="agency-more"/);
 });

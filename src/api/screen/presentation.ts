@@ -123,6 +123,17 @@ function inlineHTML(
 type Table = Extract<TextPart, { type: 'table' }>;
 /** The API's agency cell is a comma/line-break list, not a new DTO field.
  * Keep parenthesized commas within a name; never split ambiguous prose such as 또는. */
+/** 칸 글을 괄호 밖 쉼표 · 줄바꿈으로 나눈 이름 수(목록이 아니면 1). */
+function listCount(value: string): number {
+  const text = value.replace(/<br\s*\/?\s*>/gi, '\n');
+  let n = 1, depth = 0;
+  for (const ch of text) {
+    if ('([{'.includes(ch)) depth++;
+    if (')]}'.includes(ch)) depth = Math.max(0, depth - 1);
+    if (!depth && /[,，\r\n]/.test(ch)) n++;
+  }
+  return n;
+}
 function agencyCell(value: string, render: (value: string) => string): string {
   const text = value.replace(/<br\s*\/?\s*>/gi, '\n');
   const names: string[] = [];
@@ -149,6 +160,8 @@ function tableHTML(
   side?: Difference['side'],
   format: string = table.format,
   agencyPreview = false,
+  /** 카드 안 표(2026-11-24 사용자 「가독성」): 이름이 넷 이상인 칸은 앞 3개만 보이고 「외 N개 더 보기」 */
+  listPreview = false,
 ): string {
   const cell = (value: string, previous?: string) =>
     inlineHTML(value, blockId, side ? { text: previous, side } : undefined);
@@ -178,8 +191,9 @@ function tableHTML(
             .map(
               (value, c) => {
                 const agency = agencyPreview && /^세부\s*대상\s*\(기관명\)$/.test(table.head?.[c]?.trim() ?? '');
-                return '<td' + (agency ? ' style="overflow-wrap:anywhere;white-space:normal"' : '') + '>' +
-                  (agency ? agencyCell(value, (name) => cell(name)) : cell(value, other?.rows[r]?.[c])) + '</td>';
+                const long = !agency && listPreview && !side && listCount(value) > 3;
+                return '<td' + (agency ? ' style="overflow-wrap:anywhere;white-space:normal"' : long ? ' class="cell-list"' : '') + '>' +
+                  (agency || long ? agencyCell(value, (name) => cell(name)) : cell(value, other?.rows[r]?.[c])) + '</td>';
               },
             )
             .join('') +
@@ -421,6 +435,7 @@ export function sectionHTML(
         comparison?.side,
         'dto',
         Boolean(options.agencyPreview && blockId === 'S6' && !fixed),
+        !fixed, // 버전 비교 화면은 모두 펼쳐 보인다
       );
     // 소제목 형식의 판단 근거 · 자세히 보기는 partsHTML이 그린다(예전 배치에는 오지 않음)
     if (block.type === 'basis' || block.type === 'detail') return '';
