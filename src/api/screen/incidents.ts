@@ -17,11 +17,12 @@ export function incidentListRow(summary: IncidentSummary, detail?: Incident) {
 
 export function incidentDetailsView(raw: Incident, perimeters: Perimeter[]) {
   const view = incidentView(raw, perimeters);
-  view.report_text = raw.report_text ?? needed('신고 내용');
+  // QA 2-4: 신고 내용·신고자 칸은 선택 항목이라 null은 '없음'이다. 입력칸에 안내 문구를 값으로 넣지 않는다
+  view.report_text = raw.report_text ?? '';
   view.caller = {
-    org: raw.reporter_org ?? needed('신고 기관명'),
-    name: raw.reporter_name ?? needed('신고자 성명'),
-    phone: raw.reporter_phone ?? needed('신고자 연락처'),
+    org: raw.reporter_org ?? '',
+    name: raw.reporter_name ?? '',
+    phone: raw.reporter_phone ?? '',
   };
   return view;
 }

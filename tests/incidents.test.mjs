@@ -81,8 +81,8 @@ test('summary rows never invent geometry, addresses or occurrence times', () => 
   assert.equal(incidentListRow(summary('123'), raw).addr, raw.address);
   assert.equal(incidentListRow(summary('123'), raw).start_time, null);
   const view = incidentDetailsView(raw, []);
-  assert.match(view.report_text, /필요한 정보: 신고 내용/);
-  assert.match(view.caller.org, /필요한 정보: 신고 기관명/);
+  assert.equal(view.report_text, '');
+  assert.equal(view.caller.org, '');
   assert.deepEqual(view.ignition, raw.ignition_point.coordinates);
 });
 

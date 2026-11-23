@@ -44,6 +44,8 @@ export interface ScreenHost {
   reportForm: (id: string | null) => void;
   admin: () => void;
   notice: (message: string) => void;
+  /** 성공 안내(아래쪽 알림). 빨간 경고(notice)는 실패·주의에만 쓴다(QA 2-3). */
+  toast?: (message: string) => void;
   loginError: (message: string) => void;
   loginBusy: (busy: boolean) => void;
   baseAt: (at: string) => void;
@@ -1188,15 +1190,11 @@ export function createScreenBridge(
             lat > 39
           )
             throw new Error('국내 발화 위치 좌표를 입력해주세요.');
-          if (
-            !input('rep-addr') ||
-            !input('rep-report') ||
-            !input('rep-cname') ||
-            !input('rep-cphone')
-          )
-            throw new Error(
-              '발생 장소·접수 일시·신고자 성명·연락처가 필요합니다.',
-            );
+          if (!input('rep-addr') || !input('rep-report') || !input('rep-cphone'))
+            throw new Error('발생 장소·접수 일시·연락처가 필요합니다.');
+          // QA 2-4: 신고 기관명과 신고자 성명 중 하나는 꼭 받는다
+          if (!input('rep-corg') && !input('rep-cname'))
+            throw new Error('신고 기관명과 신고자 성명 중 하나는 입력해주세요.');
           // 기관별 접수 기록(11/23): 화면은 시:분만 받으므로 날짜는 신고 접수 일시를 따른다
           const intakeRecords = rp.intake.map((r) => ({
             org_name: r.org,
@@ -1213,7 +1211,7 @@ export function createScreenBridge(
                 : null,
               report_text: input('rep-text') || null,
               reporter_org: input('rep-corg') || null,
-              reporter_name: input('rep-cname'),
+              reporter_name: input('rep-cname') || null,
               reporter_phone: input('rep-cphone'),
               ...(intakeRecords.length ? { intake_records: intakeRecords } : {}),
               ...(rp.ring
@@ -1260,8 +1258,11 @@ export function createScreenBridge(
           state.incId = id;
           host.selected(id);
           host.reportForm(id);
-          host.notice('서버 응답으로 보고 내용을 갱신했습니다.');
-        } else host.notice(`산불 ${id}의 보고가 저장됐습니다. 현재 선택과 입력 내용은 유지했습니다.`);
+          const done = existing
+            ? `실측 화선 v${savedPerimeter?.version_no ?? ''}을 저장했습니다.`
+            : '산불을 등록했습니다 · 진행 중';
+          (host.toast ?? host.notice)(done);
+        } else (host.toast ?? host.notice)(`산불 ${id}의 보고가 저장됐습니다. 현재 선택과 입력 내용은 유지했습니다.`);
       });
     } finally {
       if (alive(saveEpoch)) {
