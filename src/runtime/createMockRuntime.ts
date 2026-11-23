@@ -2942,6 +2942,16 @@ export function createMockRuntime() {
         details.querySelector('summary').textContent = details.open ? '접기' : details.dataset.more;
       });
     });
+    // 문장 속 긴 이름 나열(「앞 3개 등 N곳」)의 「N곳 모두 보기」(2026-11-24 사용자 「가독성」)
+    $$('#cards .list-toggle').forEach((b) =>
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const all = b.nextElementSibling as HTMLElement | null;
+        if (!all) return;
+        all.hidden = !all.hidden;
+        b.textContent = all.hidden ? b.dataset.more : '▾ 접기';
+      }),
+    );
     $$('#cards .chg-tag').forEach((t) =>
       t.addEventListener('click', (e) => {
         e.stopPropagation();

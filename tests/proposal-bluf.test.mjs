@@ -117,3 +117,19 @@ test('BLUF: 검증기는 새 블록 · 섹션 종류를 받고, 모르는 종류
   assert.throws(() => validateProposal(proposal([{ title: '', kind: 'other', blocks: [] }])));
   assert.throws(() => validateProposal(proposal([{ title: '', kind: 'part', blocks: [{ type: 'detail', show: 'yes', blocks: [] }] }])));
 });
+
+test('긴 이름 나열은 「앞 3개 등 N곳」 + 모두 보기, 짧은 나열 · 버전 비교는 그대로', async () => {
+  const { shortenList } = await import('../src/api/screen/presentation.ts');
+  const names = ['일직119지역대(안동소방서)', '의성소방서-군위-119 안전센터', '안동소방서-안동_옥동-119 안전센터', '안동소방서', '구미소방서', '상주소방서-화서(신설)-119 안전센터'];
+  const body = names.join(', ') + '에 송전선 인근 구간 보호를 위한 진화인력 배치를 요청하십시오.';
+  const s = shortenList(body);
+  assert.equal(s.text, '일직119지역대(안동소방서), 의성소방서-군위-119 안전센터, 안동소방서-안동_옥동-119 안전센터 등 6곳에 송전선 인근 구간 보호를 위한 진화인력 배치를 요청하십시오.');
+  assert.deepEqual(s.names, names);
+  assert.equal(shortenList('A소방서, B소방서, C소방서, D소방서, E소방서에 요청하십시오.'), null); // 5곳은 그대로
+  const sections = [{ title: '', kind: 'part', blocks: [{ type: 'paragraph', category: 'REQUEST', body, cite: '', quote: '', evidence: ['SM-1'] }] }];
+  const html = sectionHTML(sections, { 'SM-1': 3 }, 'S2');
+  assert.ok(html.includes('등 6곳에 송전선') && html.includes('class="list-toggle"') && html.includes('▸ 6곳 모두 보기'));
+  assert.ok(html.includes('<div class="list-all" hidden>') && html.includes('구미소방서'));
+  const fixed = sectionHTML(sections, { 'SM-1': 3 }, 'S2', { sections, chunks: { 'SM-1': 3 }, side: 'after' });
+  assert.ok(!fixed.includes('list-toggle') && fixed.includes('구미소방서, 상주소방서'));
+});
