@@ -359,3 +359,7 @@
   color: inherit;
   font-weight: 400;
 }
+/* 지난 날짜 시각(「11.18 16:06」)이 줄마다 한 줄 · 두 줄로 들쭉날쭉하지 않게 시각 칸을 넓힘(th 인라인 62px 위) */
+#hist-events th:first-child {
+  width: 82px !important;
+}
