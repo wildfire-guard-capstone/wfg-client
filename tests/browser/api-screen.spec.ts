@@ -162,7 +162,7 @@ test('reporter submits only contracted new-report fields; MultiPolygon and holes
   const { calls, errors } = await server(page);
   await login(page, 'reporter');
   await page.locator('#rep-new').click();
-  await expect(page.locator('#rep-name')).toHaveValue('정보 미제공');
+  await expect(page.locator('#rep-name')).toHaveCount(0);
   for (const [id, value] of Object.entries({
     'rep-addr': '경북 의성군 보고 시험',
     'rep-lng': '128.602',

@@ -30,6 +30,7 @@ async function backend(page: Page, options: Options = {}) {
     ...first,
     id: '200',
     name: '두 번째 산불',
+    address: '두 번째 산불 발생 장소',
     situation: {},
     current_perimeter_id: '31',
     latest_prediction_id: null,
@@ -219,7 +220,7 @@ test('P0 A: real reporter events keep a newer selection after a delayed save; do
       .evaluate((button: HTMLButtonElement) => button.click());
     await page.locator('#wing-fire').click();
     await page.locator('#inc-list tr[data-inc="200"]').click();
-    await expect(page.locator('#rep-name')).toHaveValue('두 번째 산불');
+    await expect(page.locator('#rep-addr')).toHaveValue('두 번째 산불 발생 장소');
     h.release();
     await expect
       .poll(() =>
@@ -232,7 +233,7 @@ test('P0 A: real reporter events keep a newer selection after a delayed save; do
       )
       .toBe(2);
     expect(await page.evaluate(() => window.__mock.state.incId)).toBe('200');
-    await expect(page.locator('#rep-name')).toHaveValue('두 번째 산불');
+    await expect(page.locator('#rep-addr')).toHaveValue('두 번째 산불 발생 장소');
     expect(
       h.calls.filter(
         (c) => c.method === 'POST' && c.path.endsWith('/perimeters'),
@@ -384,7 +385,7 @@ for (const value of [true, false, undefined])
     );
     await page.locator('#wing-fire').click();
     await page.locator('#inc-list tr[data-inc="200"]').click();
-    await expect(page.locator('#ip-name')).toHaveText('두 번째 산불');
+    await expect(page.locator('#ip-name')).toHaveText('두 번째 산불 발생 장소');
     await expect(page.locator('.map-popup')).toHaveCount(0);
     await expect
       .poll(() => page.locator('.mk.village').count())
