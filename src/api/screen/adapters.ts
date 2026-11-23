@@ -106,6 +106,8 @@ export function incidentView(
       at: localHourMinute(r.received_at),
       channel: r.channel ?? '',
     })),
+    // 기존 데모의 공식 발령 필드는 서버에 없다. 화면 '공식 단계'는 overviewStage(raw)가
+    // 예측 때 판정한 current_stage로 그린다(QA 3-1)
     official_stage: NULL_TEXT,
     alert_level: NULL_TEXT,
     perimeters: perimeters

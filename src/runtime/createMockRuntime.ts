@@ -15,7 +15,7 @@ import type {
 import { createApiClientFromEnv } from '../api/environment';
 import { createApiDataSource, type ApiDataSource } from '../api/data-source';
 import { villageEvacuated, evacuationText } from '../api/screen/incidents';
-import { overviewOfficialStage, overviewCoordinates } from '../api/screen/incident-overview';
+import { overviewOfficialStage, overviewStage, overviewCoordinates } from '../api/screen/incident-overview';
 import { retainMapData, mapRenderData, type MapWindow, type MapMarker } from '../api/screen/maps';
 import { createScreenBridge, type ScreenBridge } from '../api/screen/bridge';
 import { screenMockOptions } from '../api/screen/mock-seed';
@@ -2540,6 +2540,14 @@ export function createMockRuntime() {
       ? parts.map(esc).join(' · ')
       : '<span class="muted">미확인</span>';
   }
+  // 공식 단계(QA 3-1): API 모드는 확산 예측 때 서버 규칙 엔진이 판정해 저장한 현재 단계(INC-03 current_stage).
+  // 첫 예측 전에는 「판정 전」, 예측 뒤 새 실측 화선이 들어와 재예측이 필요하면 「(직전 예측 기준)」을 붙인다
+  function stageHTML(I) {
+    if (!dataBridge) return esc(overviewOfficialStage(I.official_stage));
+    const s = overviewStage(dataBridge.current(I.id)),
+      note = s.note ? `<br><span class="small muted stage-note">${esc(s.note)}</span>` : '';
+    return (s.state === 'before' ? `<span class="muted">${esc(s.text)}</span>` : esc(s.text)) + note;
+  }
   function renderStatus() {
     const I = inc(),
       st = IS();
@@ -2556,7 +2564,7 @@ export function createMockRuntime() {
         )
         .join('')}
       <tr><td class="k">접수 기록</td><td colspan="3">${intakeHTML(I)}</td></tr>
-      <tr><td class="k">진행상태</td><td>${stBadge(I.status)}${I.ended_at ? ` <span class="small muted">종료 ${fmtIso(I.ended_at)}${I.ended_by ? ' · ' + esc(I.ended_by) : ''}</span>` : ''}</td><td class="k">공식 단계</td><td>${esc(overviewOfficialStage(I.official_stage))}</td></tr>
+      <tr><td class="k">진행상태</td><td>${stBadge(I.status)}${I.ended_at ? ` <span class="small muted">종료 ${fmtIso(I.ended_at)}${I.ended_by ? ' · ' + esc(I.ended_by) : ''}</span>` : ''}</td><td class="k">공식 단계</td><td>${stageHTML(I)}</td></tr>
       <tr><td class="k">기상</td><td colspan="3">${weatherHTML()}</td></tr>
       <tr><td class="k">실측 화선</td><td colspan="3">${perimHTML(I)}</td></tr>
       ${I.status === '종료' ? '' : `<tr><td class="k">예측</td><td colspan="3">${st.predicted ? `${fmt0(predAreaHa(st, 4))} ha(5h) · ${fmt0(predAreaHa(st, 7))} ha(8h)${st.stale ? ' <span class="badge b-대기">재예측 필요</span>' : ''}` : `<span class="muted">${dataBridge ? esc(stateText(dataBridge.dataState('prediction'), '예측 결과')) + ' · ' + esc(stateText(dataBridge.dataState('slices'), '예측 도형')) : '예측 전'}</span>`}</td></tr>`}
@@ -2619,22 +2627,25 @@ export function createMockRuntime() {
       st = IS(),
       closed = I.status === '종료';
     const btn = $('#btn-predict');
+    const predicted = dataBridge ? !!dataBridge.predictionId() : st.predicted;
     if (!state.predicting) {
-      btn.textContent = (dataBridge ? !!dataBridge.predictionId() : st.predicted) ? '다시 예측' : '확산 예측 실행';
+      btn.textContent = predicted ? '다시 예측' : '확산 예측 실행';
       btn.disabled = closed;
     } else btn.disabled = true;
     $('#pred-warn').innerHTML =
       st.predictFailed && !closed
         ? warnHTML('확산 예측 정보를 가져오지 못했습니다')
         : '';
-    // 버튼이 비활성인 이유를 옆에 작은 글씨로 알리고, 새 실측 화선이 보고되어 예측이 낡았으면 버튼 옆에 「재예측 필요」를 띄운다
-    const cp = curPerim(I);
+    // 버튼이 비활성인 이유를 옆에 작은 글씨로 알리고, 새 실측 화선이 보고되어 예측이 낡았으면 버튼 옆에 「재예측 필요」를 띄운다.
+    // 이미 예측이 있을 때만 띄운다(QA 3-2): 서버 needs_reprediction은 첫 예측 전에도 true다
+    const cp = curPerim(I),
+      stale = !!st.stale && predicted && !closed && !state.predicting;
     $('#pred-note').innerHTML = closed
       ? '종료된 산불은 예측할 수 없습니다'
-      : st.stale && !state.predicting
+      : stale
         ? `<span class="badge b-대기">재예측 필요</span> <span class="small">새 실측 화선 ${esc(perimTag(cp))} 보고됨 — 「다시 예측」을 누르십시오</span>`
         : '';
-    btn.classList.toggle('stale', !!st.stale && !closed && !state.predicting);
+    btn.classList.toggle('stale', stale);
     $('#playbar').classList.toggle('on', st.predicted && !closed);
   }
   // 위험도 구간 색: 4 이상 빨강 · 3 이상 주황 · 2 이상 노랑 · 1 이상 파랑(화면에 보이는 소수 둘째 자리 값 기준)
@@ -4994,8 +5005,14 @@ export function createMockRuntime() {
           span.title = '[필요한 정보: 산불 발생 시각]';
         }
       }
-      if (cells[2]?.textContent === '공식 단계')
-        cells[3].title = '[필요한 정보: 공식 발령 단계]';
+      if (cells[2]?.textContent === '공식 단계') {
+        const stage = overviewStage(dataBridge.current()).state;
+        cells[3].title = stage === 'missing'
+          ? '[필요한 정보: 공식 발령 단계]'
+          : stage === 'judged'
+            ? '확산 예측 때 피해면적·풍속·예상 확산 범위 안 시설 수로 판정한 단계'
+            : '';
+      }
       if (cells[0]?.textContent === '발생 장소' && missing) {
         const coordinates = cells[1].querySelector('span');
         if (coordinates) coordinates.textContent = overviewCoordinates(null);

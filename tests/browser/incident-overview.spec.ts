@@ -7,10 +7,12 @@ import {calculateRisk} from '../../src/models/risk';
 import {fillScenarioLogin} from './helpers/login';
 
 const cell=(page:Page,label:string)=>page.locator('#st-detail tr').filter({has:page.locator('td.k').filter({hasText:new RegExp(`^${label}$`)})}).locator('td').nth(1);
-async function setup(page:Page,role='commander',mode:'ready'|'stale'|'failed'|'empty'='ready') {
+async function setup(page:Page,role='commander',mode:'ready'|'stale'|'failed'|'empty'|'repredict'='ready') {
   const S=createScenario(),fixtures=createFixtures();
   const options=screenMockOptions(S,calculateRisk(S.risk_model,S.incidents[0]!.risk_demo_runs![0]!.values,[]));
-  const incident={...options.seed!.incidents[0]!,current_stage:'STAGE2' as const,ignition_point:{type:'Point' as const,coordinates:[128.61217123,36.37119876]},latest_prediction_id:mode==='empty'?null:'41'};
+  const incident={...options.seed!.incidents[0]!,current_stage:'STAGE2' as const,ignition_point:{type:'Point' as const,coordinates:[128.61217123,36.37119876]},latest_prediction_id:mode==='empty'?null:'41',
+    // 서버는 첫 예측 전에도 needs_reprediction을 true로 준다(QA 3-2). repredict = 예측 뒤 새 화선 보고
+    needs_reprediction:mode==='empty'||mode==='repredict'};
   const perimeter={...options.seed!.perimeters[0]!,version_no:1,area_ha:22.1};
   incident.current_perimeter_version=1;
   options.seed!.incidents=[incident];
@@ -54,7 +56,7 @@ test(`QA-INC overview ${role} ${width}px: display-only changes preserve role pol
     expect(server.writes()).toBe(0);return;
   } else await expect(page.locator('#info-panel')).toBeVisible();
   const stage=page.locator('#st-detail tr').filter({has:page.getByText('공식 단계',{exact:true})}).locator('td').last();
-  await expect(stage).toHaveText('정보 미제공'); // STAGE2 is automatic, not official.
+  await expect(stage).toHaveText('2단계'); // QA 3-1: 예측 때 규칙 엔진이 판정한 current_stage
   await expect(cell(page,'기상')).toHaveText('풍향 서북서 · 풍속 4.5 m/s · 습도 41% · 기온 4.5℃ · 강수 0 mm');
   const vertices=(server.perimeter.geometry as {coordinates:number[][][][]}).coordinates.flat().reduce((n,r)=>n+r.length-1,0);
   await expect(cell(page,'실측 화선')).toHaveText(`v1 · 22.1 ha · 꼭짓점 ${vertices}개`);
@@ -84,5 +86,41 @@ for(const mode of ['stale','failed','empty'] as const)test(`QA-INC ${mode}: remo
   await expect(cell(page,'기상')).not.toContainText('KMA_NCST');
   await expect(cell(page,'실측 화선')).not.toContainText('이전 버전');
   await expect(cell(page,'예측')).not.toContainText('기준 화선');
+  expect(server.writes()).toBe(0);
+});
+const stageCell=(page:Page)=>page.locator('#st-detail tr').filter({has:page.getByText('공식 단계',{exact:true})}).locator('td').last();
+for(const width of [1440,390])for(const mode of ['empty','ready','repredict'] as const)
+test(`QA 3-1·3-2 ${mode} ${width}px: official stage is the predicted judgement; 재예측 필요 only after a prediction`,async({page})=>{
+  await page.setViewportSize({width,height:960});const server=await setup(page,'commander',mode);
+  const stage=stageCell(page),note=page.locator('#pred-note'),btn=page.locator('#btn-predict');
+  if(mode==='empty') {
+    // 첫 예측 전 current_stage(STAGE2로 넣어 둠)는 판정하지 않은 값이라 보이지 않는다
+    await expect(stage.locator('span.muted').first()).toHaveText('판정 전');
+    await expect(stage.locator('.small')).toHaveText('확산 예측을 실행하면 판정됩니다');
+    await expect(stage).not.toContainText('2단계');
+    await expect(stage).toHaveAttribute('title','');
+    // needs_reprediction=true여도 예측이 없으면 재예측 배지·강조 없음. 버튼은 '확산 예측 실행'
+    await expect(btn).toHaveText('확산 예측 실행');
+    await expect(note).not.toContainText('재예측 필요');
+    await expect(btn).not.toHaveClass(/(^|\s)stale(\s|$)/);
+  } else {
+    await expect(btn).toHaveText('다시 예측');
+    await expect(stage).toHaveAttribute('title',/판정한 단계/);
+  }
+  if(mode==='ready') {
+    await expect(stage).toHaveText('2단계');
+    await expect(note).not.toContainText('재예측 필요');
+    await expect(btn).not.toHaveClass(/(^|\s)stale(\s|$)/);
+    await expect(cell(page,'예측')).not.toContainText('재예측 필요');
+  }
+  if(mode==='repredict') {
+    await expect(stage).toContainText('2단계');
+    await expect(stage.locator('.small')).toHaveText('(직전 예측 기준)');
+    await expect(note).toContainText('재예측 필요');
+    await expect(note).toContainText('새 실측 화선 v1 보고됨');
+    await expect(btn).toHaveClass(/(^|\s)stale(\s|$)/);
+    await expect(cell(page,'예측')).toContainText('재예측 필요');
+  }
+  expect(await page.locator('#st-detail td').evaluateAll(cells=>cells.every(c=>c.scrollWidth<=c.clientWidth+1))).toBe(true);
   expect(server.writes()).toBe(0);
 });

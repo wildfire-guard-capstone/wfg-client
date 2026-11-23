@@ -71,8 +71,10 @@ test('HTTP responses drive original map, large risk badge, 12 proposal slots and
   const { calls, errors } = await server(page);
   await login(page);
   await expect(page.locator('#st-detail')).toContainText('공식 단계');
-  await expect(page.locator('#st-detail')).toContainText('정보 미제공');
+  // QA 3-1: 첫 예측 전 current_stage는 판정 전 기본값이라 보이지 않는다
+  await expect(page.locator('#st-detail')).toContainText('판정 전');
   await predict(page);
+  await expect(page.locator('#st-detail')).not.toContainText('판정 전');
   await expect(page.locator('#risk-box')).toHaveText('3.20');
   const box = await page.locator('#risk-box').boundingBox();
   expect(box?.width).toBe(64);
