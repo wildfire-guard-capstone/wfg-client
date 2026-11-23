@@ -222,7 +222,6 @@ async function reporter({
       'rep-start': local(raw.started_at),
       'rep-report': local(raw.reported_at),
       'rep-observed': '2026-11-16T09:00',
-      'rep-name': raw.name,
       'rep-addr': raw.address,
       'rep-text': view.report_text,
       'rep-corg': view.caller.org,

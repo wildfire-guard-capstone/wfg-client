@@ -38,10 +38,6 @@ export const ReporterPanel = memo(function ReporterPanel() {
         </div>
         <div className="form">
           <label className="w">
-            {'산불명 *'}
-            <input id="rep-name" />
-          </label>
-          <label className="w">
             {'발생 장소(주소) *'}
             <input id="rep-addr" />
           </label>

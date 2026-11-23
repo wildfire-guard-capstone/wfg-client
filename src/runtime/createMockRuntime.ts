@@ -2445,7 +2445,9 @@ export function createMockRuntime() {
     const I = inc();
     $('#hdr-user').innerHTML =
       `<b>${esc(state.user)}</b> · ${ROLE_LABEL[state.role] || ''}(${PERM_LABEL[state.role] || ''})`;
-    $('#ip-name').textContent = I.name;
+    // 산불명 대신 발생 장소로 산불을 가리킨다(QA 2-1). 길면 잘리므로 전체는 title로
+    $('#ip-name').textContent = I.addr;
+    $('#ip-name').title = I.addr;
     $('#ip-badge').innerHTML = stBadge(I.status);
   }
   // 기상청 단기예보 캐시: 호출에 실패해도 마지막으로 받은 값과 수신 시각을 함께 표시한다(UC-SIT-03 E1)
@@ -2482,7 +2484,7 @@ export function createMockRuntime() {
             ? '종료 처리된 산불이 없습니다.'
             : '진행 중인 산불이 없습니다.';
     return list.length
-      ? `<table class="grid"><thead><tr><th>산불 · 발생 장소</th><th style="width:78px">발생 시각</th><th style="width:60px">상태</th></tr></thead><tbody>${list.map((i) => `<tr class="clickable ${i.id === selId ? 'sel' : ''}" data-inc="${i.id}"><td><b>${esc(i.name)}</b><br><span class="small muted">${esc(i.addr)}</span></td><td class="num small">${i.start_time ? esc(ymdhm(new Date(i.start_time)).slice(5)) : '<span class="muted">미확인</span>'}</td><td style="text-align:center">${stBadge(i.status)}</td></tr>`).join('')}</tbody></table>`
+      ? `<table class="grid"><thead><tr><th>발생 장소</th><th style="width:78px">발생 시각</th><th style="width:60px">상태</th></tr></thead><tbody>${list.map((i) => `<tr class="clickable ${i.id === selId ? 'sel' : ''}" data-inc="${i.id}"><td><b>${esc(i.addr)}</b></td><td class="num small">${i.start_time ? esc(ymdhm(new Date(i.start_time)).slice(5)) : '<span class="muted">미확인</span>'}</td><td style="text-align:center">${stBadge(i.status)}</td></tr>`).join('')}</tbody></table>`
       : `<div class="muted small" style="padding:8px 4px;border:1px dashed #ccc;text-align:center">${empty}</div>`;
   }
   const listModeHTML = (mode, key) =>
@@ -2550,7 +2552,7 @@ export function createMockRuntime() {
       ${mergeOthersOf(I)
         .map(
           (o) =>
-            `<tr class="merged-row"><td class="k">병합된 산불</td><td colspan="3"><b>${esc(o.name)}</b> ${stBadge(o.status)} <a href="#" class="merged-fly" data-id="${esc(o.id)}">발화점 보기</a><br><span class="small">${esc(o.addr)} · 발생 ${o.start_time ? fmtIso(o.start_time) : '미확인'} · 신고 ${fmtIso(o.report_time)} · 신고자 ${callerHTML(o)}</span><br><span class="small muted">두 산불의 P5가 겹쳐 하나의 산불로 보고, 화선·예측을 함께 그리며 위험도는 한 번 계산합니다.</span></td></tr>`,
+            `<tr class="merged-row"><td class="k">병합된 산불</td><td colspan="3"><b>${esc(o.addr)}</b> ${stBadge(o.status)} <a href="#" class="merged-fly" data-id="${esc(o.id)}">발화점 보기</a><br><span class="small">발생 ${o.start_time ? fmtIso(o.start_time) : '미확인'} · 신고 ${fmtIso(o.report_time)} · 신고자 ${callerHTML(o)}</span><br><span class="small muted">두 산불의 P5가 겹쳐 하나의 산불로 보고, 화선·예측을 함께 그리며 위험도는 한 번 계산합니다.</span></td></tr>`,
         )
         .join('')}
       <tr><td class="k">접수 기록</td><td colspan="3">${intakeHTML(I)}</td></tr>
@@ -2588,7 +2590,7 @@ export function createMockRuntime() {
     if (I.status !== '진행 중') return;
     openModal(
       '발화 종료 처리',
-      `<p><b>${esc(I.name)}</b>의 진화가 끝났으면 <b>종료</b> 상태로 바꿉니다.</p><p style="color:var(--red);font-weight:700">종료하면 상황 보고·예측 실행·상황 정정이 막힙니다.</p><table class="grid"><tr><td class="k">종료 시각</td><td>${ymdhm(dataBridge ? new Date() : nowSim())}</td></tr><tr><td class="k">처리자</td><td>${esc(state.user)}(${ROLE_LABEL[state.role]})</td></tr><tr><td class="k">이후</td><td>진행 중 목록에서 빠져 「종료」 목록으로 옮겨지고, 제안서·이력은 조회만 가능합니다.</td></tr></table>`,
+      `<p><b>${esc(I.addr)}</b>의 진화가 끝났으면 <b>종료</b> 상태로 바꿉니다.</p><p style="color:var(--red);font-weight:700">종료하면 상황 보고·예측 실행·상황 정정이 막힙니다.</p><table class="grid"><tr><td class="k">종료 시각</td><td>${ymdhm(dataBridge ? new Date() : nowSim())}</td></tr><tr><td class="k">처리자</td><td>${esc(state.user)}(${ROLE_LABEL[state.role]})</td></tr><tr><td class="k">이후</td><td>진행 중 목록에서 빠져 「종료」 목록으로 옮겨지고, 제안서·이력은 조회만 가능합니다.</td></tr></table>`,
       [
         { label: '취소' },
         {
@@ -2601,7 +2603,7 @@ export function createMockRuntime() {
             I.ended_by = state.user;
             pause();
             setT(0);
-            addEvent('종료', `${I.name} 종료 처리`);
+            addEvent('종료', `${I.addr} 종료 처리`);
             toast('산불을 종료 상태로 바꿨습니다.');
             renderAll();
           },
@@ -3518,7 +3520,7 @@ export function createMockRuntime() {
       [
         /현재 상황|상황|피해면적/,
         () =>
-          `${I.name}은 ${I.status} 상태이며 공식 단계 ${I.official_stage}, 위기경보 ${I.alert_level}입니다. 실측 피해면적 ${R.areaNow ? fmt1(R.areaNow) + ' ha' : '미입력'}(화선 ${perimTag(curPerim(I))}), 5시간 후 예상 ${fmt0(R.areaP5)} ha이고 위험구역 마을은 ${vn(R.immediate)}, 잠재 위험구역 마을은 ${vn(R.standby)}입니다 [1].`,
+          `${I.addr} 산불은 ${I.status} 상태이며 공식 단계 ${I.official_stage}, 위기경보 ${I.alert_level}입니다. 실측 피해면적 ${R.areaNow ? fmt1(R.areaNow) + ' ha' : '미입력'}(화선 ${perimTag(curPerim(I))}), 5시간 후 예상 ${fmt0(R.areaP5)} ha이고 위험구역 마을은 ${vn(R.immediate)}, 잠재 위험구역 마을은 ${vn(R.standby)}입니다 [1].`,
         'E1',
       ],
       [
@@ -3714,7 +3716,7 @@ export function createMockRuntime() {
       ]);
     if (c.type === 'eta')
       rows.push([
-        I.name,
+        I.addr,
         '예상 진화시간',
         I.field_report.expected_suppression_hours == null
           ? '미입력'
@@ -3736,9 +3738,9 @@ export function createMockRuntime() {
         [...new Set([...es.cbs_sent, ...c.targets])].join(', '),
       ]);
     if (c.type === 'stage')
-      rows.push([I.name, '공식 대응단계', I.official_stage, c.stage]);
+      rows.push([I.addr, '공식 대응단계', I.official_stage, c.stage]);
     if (c.type === 'alert')
-      rows.push([I.name, '위기경보', I.alert_level, c.level]);
+      rows.push([I.addr, '위기경보', I.alert_level, c.level]);
     return rows;
   }
   // 정정 한 건 검사 — 정정할 수 없으면 사유 문장, 문제가 없으면 null
@@ -3911,7 +3913,7 @@ export function createMockRuntime() {
       closed = I && I.status === '종료';
     if ($('#inc-drawer').classList.contains('on')) renderIncList();
     $('#rep-form-title').innerHTML = I
-      ? `발화 정보 — ${esc(I.name)} ${stBadge(I.status)}`
+      ? `발화 정보 — ${esc(I.addr)} ${stBadge(I.status)}`
       : '발화 정보 — 새 산불 보고';
     $('#rep-perim').disabled = !I || closed;
     $('#rep-save').disabled = !!closed;
@@ -3986,11 +3988,6 @@ export function createMockRuntime() {
     rp.ringSource = null;
     rp.perimMode = 'new';
     const I = id ? S.incidents.find((i) => i.id === id) : null;
-    $('#rep-name').value = I ? I.name : '';
-    if (dataBridge) {
-      ($('#rep-name') as HTMLInputElement).readOnly = true;
-      if (!I) $('#rep-name').value = NULL_TEXT;
-    }
     $('#rep-addr').value = I ? I.addr : dataBridge ? '' : '경북 의성군 ';
     $('#rep-lng').value = I ? String(I.ignition[0]) : '';
     $('#rep-lat').value = I ? String(I.ignition[1]) : '';
@@ -4183,8 +4180,7 @@ export function createMockRuntime() {
       toast('그리기를 끝내거나(「그리기 완료」) 취소한 뒤 저장하십시오.');
       return;
     }
-    const name = $('#rep-name').value.trim(),
-      addr = $('#rep-addr').value.trim(),
+    const addr = $('#rep-addr').value.trim(),
       lng = Number($('#rep-lng').value),
       lat = Number($('#rep-lat').value);
     const start = $('#rep-start').value,
@@ -4196,7 +4192,6 @@ export function createMockRuntime() {
       $(id).classList.toggle('invalid', !ok);
       if (!ok) bad.push(label);
     };
-    mark('#rep-name', !!name, '산불명');
     mark('#rep-addr', !!addr && addr !== '경북 의성군', '발생 장소');
     const coordOk =
       $('#rep-lng').value !== '' &&
@@ -4252,7 +4247,8 @@ export function createMockRuntime() {
         },
         ended_at: null,
         ended_by: null,
-        name,
+        // 산불명은 입력받지 않는다: 화면은 발생 장소로 산불을 가리킨다
+        name: addr,
         addr,
         ignition: [lng, lat],
         start_time: start || null,
@@ -4264,7 +4260,7 @@ export function createMockRuntime() {
     }
     const moved = isNew || I.ignition[0] !== lng || I.ignition[1] !== lat;
     Object.assign(I, {
-      name,
+      name: addr,
       addr,
       ignition: [lng, lat],
       start_time: start ? new Date(start).toISOString() : null,
@@ -4315,7 +4311,7 @@ export function createMockRuntime() {
     state.incId = I.id;
     addEvent(
       '입력',
-      `${isNew ? '산불 최초 보고' : '발화 정보 갱신'} — ${I.name}${perimNote}${statusNote}`,
+      `${isNew ? '산불 최초 보고' : '발화 정보 갱신'} — ${I.addr}${perimNote}${statusNote}`,
     );
     state.incId = prevInc;
     selectIncident(I.id, true);

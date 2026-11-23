@@ -1113,7 +1113,6 @@ export function createScreenBridge(
             rp.intake.length > 0 ||
             input('rep-start') !== localInputDate(existing.started_at) ||
             input('rep-report') !== localInputDate(existing.reported_at) ||
-            input('rep-name') !== existing.name ||
             input('rep-addr') !== existing.address ||
             input('rep-text') !== displayed.report_text ||
             input('rep-corg') !== displayed.caller.org ||
