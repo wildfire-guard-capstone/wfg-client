@@ -429,10 +429,36 @@ export interface ParagraphBlock {
   source?: string;
   /** 그 제안의 자세한 자료(서버 2026-11-18): 규칙 엔진 목록 · 표. 화면은 문장 밑 「자세히 보기」 */
   details?: DetailBlock[];
+  /** 소제목 형식(서버 2026-11-24): 이 제안이 든 소제목(소제목 없는 항목은 빈 글) */
+  part?: string;
 }
 export type DetailBlock =
-  | { type: 'list'; style: string; rows: { text: string }[] }
-  | { type: 'table'; head: string[]; rows: string[][] };
+  | { type: 'list'; style: string; rows: { text: string }[]; caption?: string }
+  | { type: 'table'; head: string[]; rows: string[][]; caption?: string };
+/** 소제목 형식(서버 2026-11-24 BLUF): 소제목의 「핵심 판단 근거」 — 「~므로」로 끝나는 한 구절(화면은 「…므로,」) */
+export interface ReasonBlock {
+  type: 'reason';
+  text: string;
+  source?: string;
+}
+/** 소제목 형식: 판단 근거 문장(이름표 「판정 값:」 「기준:」은 서버가 떼고 kind로 남긴다). 출처는 기준(rule) 문장만 */
+export interface BasisSentence {
+  kind: 'value' | 'rule' | 'note';
+  text: string;
+  evidence: string[];
+  quote?: string;
+}
+export interface BasisBlock {
+  type: 'basis';
+  sentences: BasisSentence[];
+  source?: string;
+}
+/** 소제목 형식: 소제목의 「자세히 보기」(판정 값으로 코드가 만든 목록 · 표). show = LLM이 펼쳐 보이라고 했는지 */
+export interface DetailSetBlock {
+  type: 'detail';
+  show: boolean;
+  blocks: DetailBlock[];
+}
 /** 상황 · 상태 · 판단 문단(서버 2026-11-17 네 단계, wfg-server PR #51). 제안(paragraph) 앞에 온다. */
 export type FactStep = 'situation' | 'status' | 'judgment';
 export interface FactBlock {
@@ -447,10 +473,16 @@ export type ProposalBlock =
   | { type: 'list'; style: string; rows: { text: string }[] }
   | { type: 'table'; head: string[]; rows: string[][] }
   | { type: 'note'; text: string }
-  | { type: 'failed'; text: string };
+  | { type: 'failed'; text: string }
+  | ReasonBlock
+  | BasisBlock
+  | DetailSetBlock;
+/** 소제목 형식(서버 2026-11-24) 섹션 종류: facts = 현황(상황 · 상태 · 파악), part = 소제목 하나, notes = ※ 안내(누락된 정보). 예전 꼴은 없음 */
+export type ProposalSectionKind = 'facts' | 'part' | 'notes';
 export interface ProposalSection {
   title: string;
   blocks: ProposalBlock[];
+  kind?: ProposalSectionKind | null;
 }
 export interface ProposalItem {
   item_code: ItemCode;

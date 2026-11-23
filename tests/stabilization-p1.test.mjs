@@ -165,7 +165,7 @@ test('four-step proposal (11/18): 현황 folded, details under its proposal, not
   assert.ok(html.includes('<b>인명</b>'));
   assert.ok(!html.includes('동원 범위') && !html.includes('추가 투입')); // ※만 있던 섹션은 빠진 정보로
   const missing = missingHTML(sections, [{ field: '군사시설', reason: '위치 정보 없음' }]);
-  assert.ok(missing.includes('class="proposal-missing fold"') && missing.includes('>빠진 정보</button>'));
+  assert.ok(missing.includes('class="proposal-missing fold"') && missing.includes('>누락된 정보</button>'));
   assert.ok(missing.includes('추가 투입 대수는 표시하지 않았습니다.') && !missing.includes('※'));
   assert.ok(missing.includes('<b>군사시설</b> — 위치 정보 없음'));
   assert.equal(missingHTML([{ title: '', blocks: [] }], []), '');
