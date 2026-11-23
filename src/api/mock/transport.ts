@@ -498,6 +498,7 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
           'report_text',
           'reporter_org',
           'initial_perimeter',
+          'intake_records',
         ],
         'INC-04': ['expected_perimeter_id'],
         'PER-02': ['geometry', 'observed_at', 'expected_perimeter_id'],
@@ -689,6 +690,18 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
               typeof body.report_text === 'string' ? body.report_text : null,
             reporter_org:
               typeof body.reporter_org === 'string' ? body.reporter_org : null,
+            intake_records: (Array.isArray(body.intake_records)
+              ? body.intake_records
+              : []
+            ).map((row, i) => {
+              if (!isRecord(row)) invalid('intake_records', '접수 기록 객체가 필요합니다.');
+              return {
+                id: String(i + 1),
+                org_name: requiredString(row, 'org_name'),
+                received_at: dateTime(row, 'received_at'),
+                channel: typeof row.channel === 'string' ? row.channel : null,
+              };
+            }),
             reported_by: user!.id,
             current_perimeter_id: next(),
             current_perimeter_version: 0,

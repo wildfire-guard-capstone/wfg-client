@@ -2494,11 +2494,11 @@ export function createMockRuntime() {
       ? I.intake
           .map(
             (r) =>
-              `<span style="display:inline-block;margin:1px 8px 1px 0">${esc(r.org)} <b>${esc(r.at)}</b> <span class="small muted">${esc(r.channel || '')}</span></span>`,
+              `<div style="margin:1px 0">${esc(r.org)} <b>${esc(r.at)}</b> <span class="small muted">${esc(r.channel || '')}</span></div>`,
           )
           .join('')
       : dataBridge
-        ? NULL_TEXT
+        ? '<span class="muted">접수 기록 없음</span>'
         : '—';
   const perimHTML = (I) => {
     const p = curPerim(I);
@@ -3918,8 +3918,11 @@ export function createMockRuntime() {
     $('#rep-perim').disabled = !I || closed;
     $('#rep-save').disabled = !!closed;
     $('#rep-closed-note').style.display = closed ? '' : 'none';
+    // 저장된 산불의 접수 기록은 서버 값이다(INC-02 때만 받음): 지우거나 더하지 않는다
+    const intakeLocked = closed || (!!dataBridge && !!I);
+    ($('#rep-panel .intake-add') as HTMLElement).style.display = intakeLocked ? 'none' : '';
     $('#rep-intake').innerHTML = rp.intake.length
-      ? `<table class="grid"><thead><tr><th>접수 기관</th><th style="width:52px">시각</th><th>접수 경로</th><th style="width:26px"></th></tr></thead><tbody>${rp.intake.map((r, i) => `<tr><td>${esc(r.org)}</td><td class="num">${esc(r.at)}</td><td>${esc(r.channel || '—')}</td><td style="text-align:center">${closed ? '' : `<button class="ik-del" data-i="${i}" title="삭제" style="padding:0 5px">✕</button>`}</td></tr>`).join('')}</tbody></table>`
+      ? `<table class="grid"><thead><tr><th>접수 기관</th><th style="width:52px">시각</th><th>접수 경로</th>${intakeLocked ? '' : '<th style="width:26px"></th>'}</tr></thead><tbody>${rp.intake.map((r, i) => `<tr><td>${esc(r.org)}</td><td class="num">${esc(r.at)}</td><td>${esc(r.channel || '—')}</td>${intakeLocked ? '' : `<td style="text-align:center"><button class="ik-del" data-i="${i}" title="삭제" style="padding:0 5px">✕</button></td>`}</tr>`).join('')}</tbody></table>`
       : '<div class="muted small">접수 기록 없음</div>';
     $$('#rep-intake .ik-del').forEach(
       (b) =>
@@ -4985,12 +4988,6 @@ export function createMockRuntime() {
           span.title = '[필요한 정보: 산불 발생 시각]';
         }
       }
-      if (
-        !pending &&
-        cells[0]?.textContent === '접수 기록' &&
-        !inc().intake.length
-      )
-        cells[1].textContent = '[필요한 정보: 기관별 접수 이력]';
       if (cells[2]?.textContent === '공식 단계')
         cells[3].title = '[필요한 정보: 공식 발령 단계]';
       if (cells[0]?.textContent === '발생 장소' && missing) {
@@ -5004,10 +5001,6 @@ export function createMockRuntime() {
         element.title = '[필요한 정보: 산불 발생 시각]';
       }
     });
-    if (state.role === 'reporter' && !state.rep.intake.length) {
-      const empty = $('#rep-intake .muted');
-      if (empty) empty.textContent = NULL_TEXT;
-    }
   }
   function refreshApiDisplay() {
     if (dataBridge?.pendingIncident()) {

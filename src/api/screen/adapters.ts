@@ -100,7 +100,12 @@ export function incidentView(
       phone: raw.reporter_phone ?? '',
     },
     reported_by: raw.reported_by,
-    intake: [],
+    // 기관별 접수 기록(11/23). 화면은 접수 시각을 시:분으로 보여 준다
+    intake: (raw.intake_records ?? []).map((r) => ({
+      org: r.org_name,
+      at: localHourMinute(r.received_at),
+      channel: r.channel ?? '',
+    })),
     official_stage: NULL_TEXT,
     alert_level: NULL_TEXT,
     perimeters: perimeters
@@ -125,6 +130,10 @@ export function incidentView(
     ended_by: raw.ended_by,
   };
 }
+const localHourMinute = (iso: string) => {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
 export function emptyIncident(origin: [number, number]): ScreenIncident {
   return {
     id: '__NULL__',
