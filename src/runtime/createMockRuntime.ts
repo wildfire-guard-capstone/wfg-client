@@ -2025,7 +2025,7 @@ export function createMockRuntime() {
       inc().status === '종료'
         ? `${dataBridge ? '종료' : hhmm(T0)}<small>종료 — 예측 미표시</small>`
         : st.predicted
-          ? `${hhmm(d)}<small>t0+${st.t}h${!dataBridge && isNight(d) ? ' · 야간' : ''}</small>`
+          ? `${hhmm(d)}<small>${st.t ? `${st.t}시간 뒤` : '화선 관측'}${!dataBridge && isNight(d) ? ' · 야간' : ''}</small>`
           : dataBridge ? `${esc(stateText(dataBridge.dataState('prediction'), '예측 결과'))}<small>${esc(stateText(dataBridge.dataState('slices'), '예측 도형'))}</small>` : `${hhmm(T0)}<small>예측 전</small>`;
     updateFireLayers();
   }
@@ -2737,7 +2737,7 @@ export function createMockRuntime() {
             `<tr class="clickable" data-axis="${f.key}" title="${esc(f.name)} 변수 보기"><td><b>${esc(f.name)}</b></td><td><span class="rk-bar"><i class="${riskBand(f.score)}" style="width:${f.score == null ? 0 : (f.score / 5) * 100}%"></i></span>${riskChip(f.score)}</td><td class="num" style="text-align:center">${numberText(f.weight, 3)}</td></tr>`,
         )
         .join('')}</tbody></table>
-      <table class="grid rk-meta"><tr><td class="k">기준</td><td>화선 ${perimTag(st.predPerim)} · P5</td></tr><tr><td class="k">계산 시각</td><td>${rk.computedAt ? ymdhm(rk.computedAt) : dataBridge ? NULL_TEXT : '—'}</td></tr></table>
+      <table class="grid rk-meta"><tr><td class="k">기준</td><td>화선 ${perimTag(st.predPerim)} · P5</td></tr>${rk.computedAt ? `<tr><td class="k">계산 시각</td><td>${ymdhm(rk.computedAt)}</td></tr>` : ''}</table>
       ${rk.missing.length ? `<div style="margin-top:6px">${warnHTML(dataBridge && rk.score == null ? '산불 위험도 미산출 — 계산 결과 미제공' : `가져오지 못한 지표 ${rk.missing.length}개는 빼고 계산했습니다`)}</div>` : ''}
       <div class="btnrow" style="margin-top:8px"><button id="btn-risk-vars" class="primary" style="flex:1;justify-content:center">요소별 지표</button></div>`;
     if (dataBridge) {
