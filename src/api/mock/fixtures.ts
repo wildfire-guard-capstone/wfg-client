@@ -359,6 +359,7 @@ export function createFixtures(): ResponseMap {
   const layerIds = [
     'admin_areas',
     'villages',
+    'admin_villages',
     'facilities',
     'road',
     'track',
@@ -376,6 +377,8 @@ export function createFixtures(): ResponseMap {
         ? 'admin_area'
         : id === 'villages'
           ? 'village'
+          : id === 'admin_villages'
+            ? 'admin_village'
           : id === 'facilities'
             ? 'facility'
             : 'map_feature',

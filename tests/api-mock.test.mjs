@@ -428,7 +428,7 @@ test('saved correction survives regeneration failure; PROP-05 retries job withou
 test('layers, resource filters, pagination, admin issuance and logs', async () => {
   const client = make();
   await login(client);
-  assert.equal((await client.request('MAP-01')).length, 10);
+  assert.equal((await client.request('MAP-01')).length, 11);
   assert.equal(
     (
       await client.request('MAP-02', {

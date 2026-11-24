@@ -38,6 +38,9 @@ test('map view preserves GeoJSON including holes and never generates village/hou
   ]) };
   const view = mapRenderData(data);
   assert.deepEqual(view.markers[0].position, village.properties.label_point.coordinates);
+  assert.equal(view.markers[0].cls, 'beop');
+  assert.deepEqual(view.beop.features.map(f => f.geometry), fixture['MAP-02'].features.map(f => f.geometry));
+  assert.deepEqual(view.adminVillages, []);
   assert.ok(Number.isNaN(view.villages[0].hh));
   assert.ok(Number.isNaN(view.villages[0].disabled));
   assert.equal(view.houses.features.length, 0);
@@ -46,4 +49,22 @@ test('map view preserves GeoJSON including holes and never generates village/hou
   assert.equal(view.boundaries.features[0].properties.level, 'sigungu');
   assert.equal(boundary.properties.level, 'SIGUNGU');
   assert.equal(mapPosition({ type: 'Point', coordinates: [999, 35] }), null);
+});
+
+test('행정리는 hall_point에 이름으로 찍고 소속 법정리 · 읍면을 붙인다 — 좌표가 없으면 만들지 않는다', () => {
+  const fixture = createFixtures(), village = fixture['MAP-02'].features[0];
+  const hall = { type: 'Point', coordinates: [128.5997, 36.3781] };
+  const row = (id, name, hall_point) => ({ type: 'Feature', id, geometry: village.geometry, properties: { id, village_id: village.properties.id, name, seq: 1, hall_name: '회관 이름', hall_point, hall_source: null, houses_est: 24, attrs: {} } });
+  const view = mapRenderData({ layers: [], areas: { status: 'ready', data: fixture['MAP-04'].items }, collections: new Map([
+    ['villages', { status: 'ready', data: fixture['MAP-02'] }],
+    ['admin_villages', { status: 'ready', data: { type: 'FeatureCollection', features: [row('365', '괴산1리', hall), row('366', '괴산2리', null)] } }],
+  ]) });
+  assert.deepEqual(view.adminVillages, [{ id: '365', lng: 128.5997, lat: 36.3781 }]);
+  const marker = view.markers.find(m => m.entity === 'admin_village');
+  assert.equal(marker.key, 'h:365');
+  assert.equal(marker.name, '괴산1리');
+  assert.equal(marker.villageId, village.properties.id);
+  assert.deepEqual(marker.position, hall.coordinates);
+  assert.ok(marker.kind.endsWith(village.properties.name));
+  assert.equal(view.markers.filter(m => m.entity === 'admin_village').length, 1);
 });

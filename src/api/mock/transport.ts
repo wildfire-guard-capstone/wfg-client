@@ -894,7 +894,22 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
           )
             fail(422, 'INVALID_BBOX', '경도·위도 범위를 확인해주세요.');
           const features = structuredClone(fixture['MAP-02'].features);
-          if (params.layer_id !== 'villages')
+          if (params.layer_id === 'admin_villages')
+            features.forEach((f) => {
+              f.id = '501';
+              f.properties = {
+                id: '501',
+                village_id: '1024',
+                name: '목업1리',
+                seq: 1,
+                hall_name: '목업1리마을회관',
+                hall_point: { type: 'Point', coordinates: [128.6, 36.37] },
+                hall_source: '목업',
+                houses_est: null,
+                attrs: {},
+              };
+            });
+          else if (params.layer_id !== 'villages')
             features.forEach((f) => {
               f.id = 'mock-feature-1';
               f.geometry = { type: 'Point', coordinates: [128.6, 36.37] };
@@ -949,7 +964,7 @@ export function createMockFetch(options: MockOptions = {}): Fetcher {
           break;
         }
         case 'MAP-03': {
-          if (!['village', 'facility', 'map_feature', 'resource_base', 'admin_area'].includes(params.entity_type!)) fail(422, 'UNKNOWN_ENTITY_TYPE', '알 수 없는 지도 대상 종류');
+          if (!['village', 'admin_village', 'facility', 'map_feature', 'resource_base', 'admin_area'].includes(params.entity_type!)) fail(422, 'UNKNOWN_ENTITY_TYPE', '알 수 없는 지도 대상 종류');
           if (user?.role === 'REPORTER' && params.entity_type === 'resource_base') fail(403, 'FORBIDDEN_ROLE', '기지 조회 권한이 없습니다.');
           data = { ...fixture['MAP-03'], entity_type: params.entity_type, entity: { ...fixture['MAP-03'].entity, id: params.entity_id } };
           break;

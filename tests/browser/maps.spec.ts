@@ -26,8 +26,27 @@ test('HTTP map data drives unchanged markers, source geometry and layer toggles;
   expect(calls).toContain('/api/v1/map/layers');
   const marker = page.locator('.mk.village').first();
   await marker.evaluate((el: HTMLElement) => el.click());
+  await expect(marker).toContainText('목업1리');
   await expect(page.locator('.map-popup')).toContainText('목업 마을');
-  expect(calls.some(path => path.startsWith('/api/v1/map/entities/village/'))).toBe(true);
+  expect(calls.some(path => path.startsWith('/api/v1/map/entities/admin_village/'))).toBe(true);
+  // 재생 시각의 화선이 행정리 좌표에 닿으면 빨강, 처음으로 돌리면 원래 색
+  await page.locator('#btn-predict').click();
+  await expect.poll(() => page.evaluate(() => window.__mock.IS(window.__mock.state.incId).slices.length), { timeout: 15_000 }).toBeGreaterThan(0);
+  const slide = (t: number) => page.locator('#time-slider').evaluate((el: HTMLInputElement, v) => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(el, String(v)); el.dispatchEvent(new Event('input', { bubbles: true })); }, t);
+  await slide(8);
+  await expect(marker).toHaveClass(/burned/);
+  await slide(0);
+  await expect(marker).not.toHaveClass(/burned/);
+  // 법정리는 아이콘 없이 이름과 노란 2px 경계선만
+  await expect(page.locator('.mk.beop .lb').first()).toHaveText('목업 마을');
+  await expect(page.locator('.mk.beop .ico')).toHaveCount(0);
+  expect(await page.evaluate(() => [window.__mock.map.getPaintProperty('beop-line', 'line-width'), window.__mock.map.getPaintProperty('beop-line', 'line-color')])).toEqual([2, '#ffd400']);
+  expect(await page.evaluate(async () => (await window.__mock.map.getSource('admin').getData()).features.length)).toBe(0);
+  await page.evaluate(() => window.__mock.map.jumpTo({ zoom: 12.5 }));
+  await expect(marker.locator('.lb')).toBeVisible();
+  await page.evaluate(() => window.__mock.map.jumpTo({ zoom: 11.5 }));
+  await expect(marker.locator('.lb')).toBeHidden();
+  await expect(marker.locator('.ico')).toBeVisible();
   await page.locator('.lyr-btn[data-layer="villages"]').click();
   await expect(marker).toBeHidden();
   await page.locator('.lyr-btn[data-layer="villages"]').click();

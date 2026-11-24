@@ -21,9 +21,10 @@ test('QA-MAP-01: only water and routes change; rail remains OFF and all other de
   const baseline=execFileSync('git',['show','HEAD:src/components/MapToolbar.tsx'],{encoding:'utf8'});
   const expected={fire:true,risk:true,villages:true,houses:false,care:true,heritage:true,shelters:true,water:false,power:true,agencies:true,roads:true,rail:false,routes:false};
   assert.deepEqual(buttons(current),expected);
-  const normalized=current.replace(/className="blue lyr-btn off"(\s+data-layer="(?:water|routes)")/g,'className="blue lyr-btn"$1')
+  const renamed=(text)=>text.replace('행정리(화선이','마을(화선이').replace("{'행정리'}","{'마을'}"); // 11/25: 마을 → 행정리
+  const normalized=renamed(current).replace(/className="blue lyr-btn off"(\s+data-layer="(?:water|routes)")/g,'className="blue lyr-btn"$1')
     .replace(/\{'(\d)배속'\}/g,"{'$1×'}"); // QA 3-6: 재생 속도를 쉬운 말로(2× → 2배속)
-  const baselineNormalized=baseline.replace(/className="blue lyr-btn off"(\s+data-layer="(?:water|routes)")/g,'className="blue lyr-btn"$1')
+  const baselineNormalized=renamed(baseline).replace(/className="blue lyr-btn off"(\s+data-layer="(?:water|routes)")/g,'className="blue lyr-btn"$1')
     .replace(/\{'(\d)배속'\}/g,"{'$1×'}"); // QA 3-6: 재생 속도를 쉬운 말로(2× → 2배속)
   assert.equal(normalized,baselineNormalized,'No label, style, event or other toolbar changes');
 });

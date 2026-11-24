@@ -63,6 +63,8 @@ export function createMockRuntime() {
   const apiMode = import.meta.env.VITE_API_MODE;
   const authSession = createAuthSession(apiMode === 'http' ? browserSessionStorage() : undefined);
   let BOUNDARIES: FeatureCollection = apiMode ? { type: 'FeatureCollection', features: [] } : STATIC_BOUNDARIES;
+  // 행정리(MAP-02 admin_villages) — 지도 아이콘과 화선 도달 표시에만 쓴다
+  let adminVillages: { id: string; lng: number; lat: number }[] = [];
   let OSM_LINES: FeatureCollection = apiMode ? { type: 'FeatureCollection', features: [] } : STATIC_OSM_LINES;
   if (apiMode) {
     S.villages = []; S.facilities = []; S.shelters = []; S.agencies = []; S.routes = [];
@@ -1543,7 +1545,7 @@ export function createMockRuntime() {
     el.innerHTML = `<span class="ico" style="background:${ICON_COLOR[cls] || '#999'}">${ICONS[icon]}</span><span class="lb">${esc(label)}${sub ? `<small>${esc(sub)}</small>` : ''}</span>`;
     return el;
   }
-  const mkMarker = (key, el, lngLat, onClick) => {
+  const mkMarker = (key, el, lngLat, onClick, anchor: 'bottom' | 'top' | 'center' = 'bottom') => {
     if (onClick)
       el.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1552,7 +1554,7 @@ export function createMockRuntime() {
       });
     state.markers[key] = new maplibregl.Marker({
       element: el,
-      anchor: 'bottom',
+      anchor,
     })
       .setLngLat(lngLat)
       .addTo(map);
@@ -1647,6 +1649,7 @@ export function createMockRuntime() {
     if ($('#map-data-state')) $('#map-data-state').hidden = true;
     if (!apiMode) return;
     S.villages = []; S.facilities = []; S.shelters = []; S.agencies = []; S.routes = [];
+    adminVillages = [];
     BOUNDARIES = OSM_LINES = { type: 'FeatureCollection', features: [] };
     if (map?.getSource('admin')) applyApiMap({ layers: [], collections: new Map(), areas: { status: 'ready', data: [] } });
   }
@@ -1659,7 +1662,7 @@ export function createMockRuntime() {
       if (controller.signal.aborted) return;
       if (result.entity_type !== marker.entity || result.entity.id !== marker.id) throw new Error('[필요한 정보: 선택한 지도 대상과 일치하는 상세 응답]');
       entityPopup?.remove();
-      entityPopup = popup(marker.position, `<b>${esc(result.entity.name || '[필요한 정보: 지도 대상명]')}</b> <span style="color:#666">${esc(marker.entity === 'village' ? `${marker.kind} · ${evacuationText(villageEvacuated(inc(), marker.id))}` : marker.kind)}</span>`);
+      entityPopup = popup(marker.position, `<b>${esc(result.entity.name || '[필요한 정보: 지도 대상명]')}</b> <span style="color:#666">${esc(marker.villageId ? `${marker.kind} · ${evacuationText(villageEvacuated(inc(), marker.villageId))}` : marker.kind)}</span>`);
     } catch (error) {
       if (!controller.signal.aborted) failNotice(`지도 상세 조회 실패${error.status ? ` (HTTP ${error.status})` : ''}: ${error.message}`);
     }
@@ -1669,12 +1672,17 @@ export function createMockRuntime() {
     const view = mapRenderData(effective);
     currentMapData = effective;
     S.villages = view.villages; S.facilities = view.facilities; S.shelters = view.shelters; S.agencies = view.agencies;
+    adminVillages = view.adminVillages;
     BOUNDARIES = view.boundaries; OSM_LINES = view.roads;
     for (const [key, marker] of Object.entries(state.markers))
-      if (/^[vfsaw]:/.test(key)) { marker.remove(); delete state.markers[key]; }
+      if (/^[vhfsaw]:/.test(key)) { marker.remove(); delete state.markers[key]; }
     for (const marker of view.markers)
-      mkMarker(marker.key, markerEl(marker.cls, marker.icon, marker.name, marker.kind), marker.position, () => void openApiEntity(marker));
-    for (const [id, data] of [['admin', view.boundaries], ['osm-lines', view.roads], ['power', view.power], ['houses', view.houses], ['routes', EMPTY]] as const)
+      if (marker.cls === 'beop') mkMarker(marker.key, beopLabelEl(marker.name), marker.position, null, 'center');
+      // 행정리 좌표는 대피소로 지정된 회관과 같은 자리가 있어(의성 28곳) 좌표 아래쪽에 그린다
+      else mkMarker(marker.key, markerEl(marker.cls, marker.icon, marker.name, marker.kind), marker.position, () => void openApiEntity(marker), marker.entity === 'admin_village' ? 'top' : 'bottom');
+    ensureBeopLayer();
+    // 행정구역 선(읍면 · 시군구 · 시도)은 그리지 않고 법정리 선만 그린다
+    for (const [id, data] of [['admin', EMPTY], ['beop', view.beop], ['osm-lines', view.roads], ['power', view.power], ['houses', view.houses], ['routes', EMPTY]] as const)
       (map.getSource(id) as maplibregl.GeoJSONSource | undefined)?.setData(data);
     applyLayerVisibility();
     updateFireLayers();
@@ -1721,6 +1729,24 @@ export function createMockRuntime() {
       }
     }
   }
+  function beopLabelEl(name: string) {
+    const el = document.createElement('div');
+    el.className = 'mk beop';
+    el.innerHTML = `<span class="lb">${esc(name)}</span>`;
+    return el;
+  }
+  // 법정리 경계선: 위험구역 · 화선보다 아래에 깔리는 노란 2px 실선
+  function ensureBeopLayer() {
+    if (map.getSource('beop')) return;
+    map.addSource('beop', { type: 'geojson', data: EMPTY });
+    map.addLayer({ id: 'beop-line', type: 'line', source: 'beop', paint: { 'line-color': '#ffd400', 'line-width': 2, 'line-opacity': 0.95 } }, 'risk-8');
+  }
+  // 멀리서 보면 행정리 이름을 숨기고 작은 아이콘만, 더 멀면 법정리 이름도 숨긴다
+  function syncMapLabels() {
+    const zoom = map.getZoom(), el = map.getContainer();
+    el.classList.toggle('far', zoom < 12);
+    el.classList.toggle('very-far', zoom < 11);
+  }
   function scheduleApiMap() {
     if (!apiMode) return;
     window.clearTimeout(mapTimer);
@@ -1730,7 +1756,9 @@ export function createMockRuntime() {
     if (!mapBound) {
       mapBound = true;
       map.on('moveend', scheduleApiMap);
-      for (const id of ['roads', 'power', 'houses', 'admin-sig'])
+      map.on('zoom', syncMapLabels);
+      syncMapLabels();
+      for (const id of ['roads', 'power', 'houses'])
         map.on('click', id, (event) => {
           if (state.rep.pickMode || state.rep.drawMode) return;
           const p = event.features?.[0]?.properties;
@@ -1814,6 +1842,12 @@ export function createMockRuntime() {
     lb.setLngLat(c);
     lb.getElement().style.display = layerOn('risk') ? '' : 'none';
   }
+  // 행정리 좌표에 화선이 닿으면 빨강
+  function markAdminVillages(reached: (p: LngLat) => boolean) {
+    adminVillages.forEach((v) =>
+      state.markers[`h:${v.id}`]?.getElement().classList.toggle('burned', reached([v.lng, v.lat])),
+    );
+  }
   function updateFireLayers() {
     if (!map || !map.getSource('fire-cum')) return;
     const I = inc(),
@@ -1845,6 +1879,7 @@ export function createMockRuntime() {
       S.villages.forEach((v) =>
         state.markers[`v:${v.id}`].getElement().classList.remove('burned'),
       );
+      markAdminVillages(() => false);
       S.shelters.forEach((s) =>
         state.markers[`s:${s.id}`].getElement().classList.remove('unsafe'),
       );
@@ -1874,6 +1909,7 @@ export function createMockRuntime() {
         .getElement()
         .classList.toggle('burned', t > 0 && inAny([v.lng, v.lat], t - 1)),
     );
+    markAdminVillages((p) => t > 0 && inAny(p, t - 1));
     S.shelters.forEach((s) =>
       state.markers[`s:${s.id}`]
         .getElement()
@@ -1943,7 +1979,7 @@ export function createMockRuntime() {
         if (k.startsWith(prefix))
           m.getElement().style.display = v ? '' : 'none';
       });
-    show('v:', layerOn('villages'));
+    show(apiMode ? 'h:' : 'v:', layerOn('villages'));
     show('s:', layerOn('shelters'));
     show('w:', layerOn('water'));
     show('a:', layerOn('agencies'));
