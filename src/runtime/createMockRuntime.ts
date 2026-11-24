@@ -1,7 +1,7 @@
 import { createAuthSession, browserSessionStorage } from '../api/auth-session';
 import { demoAccount, demoAccountError } from '../api/demo-accounts';
 import { resourceCellText } from '../api/screen/resources';
-import { richText, contentHTML, withCitations, comparisonHTML, sectionHTML, missingHTML, stateText, remoteState, canCorrectPerimeter } from '../api/screen/presentation';
+import { richText, contentHTML, withCitations, comparisonHTML, sectionHTML, missingHTML, stateText, remoteState, canCorrectPerimeter, proposalJobHTML } from '../api/screen/presentation';
 import type {
   Feature,
   FeatureCollection,
@@ -2860,6 +2860,13 @@ export function createMockRuntime() {
       st.proposalFailed && !closed
         ? `<div style="margin-bottom:6px">${warnHTML(run ? '새 대응 제안 정보를 가져오지 못했습니다' : '대응 제안 정보를 가져오지 못했습니다')}</div>`
         : '';
+    // 예측과 따로 만드는 제안서(두 묶음): 생성 중 · 실패(다시 생성) · 재예측 안내
+    const job = dataBridge?.proposalJob();
+    if (job && job.state !== 'none') {
+      $('#prop-warn').insertAdjacentHTML('beforeend', proposalJobHTML(job));
+      const retry = $('#btn-proposal-retry');
+      if (retry) retry.onclick = () => void dataBridge.retryProposal();
+    }
     $('#prop-meta').innerHTML = '';
     const banner = $('#stage-banner');
     if (run && run.R.stageUp && !closed) {
@@ -2868,7 +2875,7 @@ export function createMockRuntime() {
     } else banner.classList.remove('on');
     const box = $('#cards');
     if (!run) {
-      box.innerHTML = `<div class="muted" style="padding:18px 6px;text-align:center">${dataBridge ? esc(stateText(dataBridge.dataState('proposal'), '대응 제안')) : '확산 예측을 실행하면 제안이 생성됩니다.'}</div>`;
+      box.innerHTML = job && job.state !== 'none' ? '' : `<div class="muted" style="padding:18px 6px;text-align:center">${dataBridge ? esc(stateText(dataBridge.dataState('proposal'), '대응 제안')) : '확산 예측을 실행하면 제안이 생성됩니다.'}</div>`;
       $('#prop-summary').innerHTML = '';
       return;
     }
@@ -5011,6 +5018,16 @@ export function createMockRuntime() {
         note.textContent = '예측 결과 불러오는 중';
       }
     }
+    const job = dataBridge.proposalJob();
+    const proposalTab = $('.ip-tab[data-tab="proposal"]');
+    if (proposalTab) {
+      if (job.state === 'none') proposalTab.removeAttribute('data-job');
+      else proposalTab.setAttribute('data-job', job.state);
+    }
+    if (job.state === 'running' && $('#btn-predict')) {
+      $('#btn-predict').disabled = true;
+      $('#btn-predict').title = '대응 제안 준비 중';
+    } else if ($('#btn-predict')) $('#btn-predict').title = '';
     const risk = dataBridge.riskData();
     if ($('#risk-box')) $('#risk-box').title = IS().riskStatus === 'failed' ? '위험도 조회 실패' : risk ? `${risk.status} · ${risk.method_version || '[필요한 정보: 위험도 계산 방식]'}${risk.unavailable_reasons.length ? ' · ' + risk.unavailable_reasons.join(' · ') : ''}` : '위험도 조회 결과 없음';
     const missing = !!pending || dataBridge.empty();

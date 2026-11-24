@@ -1,5 +1,6 @@
 import type { AuthSession, SessionView } from '../auth-session.ts';
 import { remoteState, stateText, observedAt, canCorrectPerimeter } from './presentation.ts';
+import type { ProposalJobView } from './presentation.ts';
 import type * as C from '../contracts.ts';
 import type { ApiDataSource, IncidentData } from '../data-source.ts';
 import type {
@@ -11,6 +12,8 @@ import type {
 import type { Scenario, Account, Ring } from '../../types/scenario.ts';
 import { createIdempotencyKey } from '../client.ts';
 import { waitForOperation, validateOperation } from '../operations.ts';
+import { ApiError } from '../errors.ts';
+import { delay } from '../async.ts';
 import { remote } from '../data-source.ts';
 import { incidentDetailsView, incidentListRow } from './incidents.ts';
 import { eventViews } from './events.ts';
@@ -77,7 +80,7 @@ const escaped = (value: unknown) =>
 export function createScreenBridge(
   source: ApiDataSource,
   host: ScreenHost,
-  options: { accountAdminAreaId?: string; authSession?: AuthSession; preserveSessionOnDispose?: boolean } = {},
+  options: { accountAdminAreaId?: string; authSession?: AuthSession; preserveSessionOnDispose?: boolean; followIntervalMs?: number } = {},
 ) {
   const { S, state, IS } = host;
   const origin: [number, number] = [...S.incidents[0]!.ignition];
@@ -123,6 +126,8 @@ export function createScreenBridge(
   const confirming = new Set<string>();
   const savedConfirmations = new Set<string>();
   const regenerating = new Set<string>();
+  /** 예측과 따로 도는 제안서 만들기(산불별). 예측이 끝나면 지도를 먼저 보이고 이것을 기다린다. */
+  const proposalJobs = new Map<string, { id: string | null; status: 'RUNNING' | 'FAILED' }>();
   let counts = resourceCounts(null);
   const weatherCache = new Map<string,C.WeatherNow>();
   let currentWeather: C.WeatherNow | null = null;
@@ -187,6 +192,7 @@ export function createScreenBridge(
     confirming.clear();
     savedConfirmations.clear();
     regenerating.clear();
+    proposalJobs.clear();
     errors.clear();
     currentWeather = null;
     weatherCache.clear();
@@ -484,6 +490,7 @@ export function createScreenBridge(
     incidentId: string,
     signal: AbortSignal,
     epoch: number,
+    withChat = true,
   ) {
     const messageTicket = chatTicket;
     const logTicket = ++eventTicket;
@@ -502,7 +509,7 @@ export function createScreenBridge(
       state.role === 'commander'
         ? remote(() => source.corrections(incidentId, signal))
         : Promise.resolve(null),
-      state.role === 'commander'
+      withChat && state.role === 'commander'
         ? remote(() => source.messages(incidentId, signal))
         : Promise.resolve(null),
     ]);
@@ -584,6 +591,7 @@ export function createScreenBridge(
       host.selected(id, fly);
       if (state.role === 'reporter') host.reportForm(id);
       applied = true;
+      void resumeProposal(id);
       await Promise.all([
         resources(id, signal, epoch),
         histories(id, signal, epoch),
@@ -730,6 +738,7 @@ export function createScreenBridge(
           if (listError)
             host.notice(`산불 목록을 불러오지 못했습니다. ${error(listError)}`);
           if (raw.has(state.incId)) {
+            void resumeProposal(state.incId);
             await Promise.all([
               resources(state.incId, signal, epoch),
               histories(state.incId, signal, epoch),
@@ -792,8 +801,10 @@ export function createScreenBridge(
       return;
     }
     const id = incident.id;
+    if (blockedByProposal(id, '다시 예측')) return;
     errors.delete(`${id}.predict`);
     host.busy(true);
+    let proposalFollow: (() => void) | null = null;
     await task(async (signal, epoch) => {
       try {
         const saved = predictionOperations.get(id);
@@ -815,6 +826,12 @@ export function createScreenBridge(
             `${operation.error?.code ?? '[필요한 정보: 실패 작업 error.code]'}: ${operation.error?.message ?? '예측 작업이 실패했습니다.'}`,
           );
         if (!operation.result?.prediction_id) throw new Error('[필요한 정보: 성공한 예측 작업의 result.prediction_id]');
+        const follow = operation.result.proposal_operation_id;
+        if (follow && alive(epoch)) {
+          // 제안서는 서버가 이어서 만든다 — 지도 · 위험도를 먼저 보이고 끝나면 제안서만 다시 읽는다
+          markProposal(id, follow);
+          proposalFollow = () => void watchProposal(id, follow);
+        }
         if (!alive(epoch) || state.incId !== id || pendingIncident) return;
         await select(id, false, operation.result.prediction_id);
         if (!alive(epoch) || state.incId !== id || pendingIncident) return;
@@ -830,9 +847,165 @@ export function createScreenBridge(
         }
         throw cause;
       } finally {
-        if (alive(epoch)) host.busy(false);
+        if (alive(epoch)) {
+          host.busy(false);
+          proposalFollow?.();
+        }
       }
     });
+  }
+  // ── 제안서 만들기(예측과 다른 묶음, 11/24) ──────────────────────────
+  const proposalRunning = (id: string) => proposalJobs.get(id)?.status === 'RUNNING';
+  function blockedByProposal(id: string, what: string) {
+    if (!proposalRunning(id)) return false;
+    host.notice(`대응 제안 준비 중입니다. 끝난 뒤 ${what}할 수 있습니다.`);
+    return true;
+  }
+  function markProposal(id: string, operationId: string | null) {
+    proposalJobs.set(id, { id: operationId, status: 'RUNNING' });
+    if (state.incId === id) host.refresh();
+  }
+  function failProposal(id: string, cause: unknown) {
+    proposalJobs.set(id, { id: null, status: 'FAILED' });
+    errors.set(`${id}.proposalJob`, cause);
+    if (state.incId === id) host.refresh();
+  }
+  /** 끝난 작업을 산불 정보에서 지운다 — 남아 있으면 「준비 중」이 안 풀리고 다시 예측이 그 작업을 이어받는다. */
+  function settleOperation(id: string, operationId: string) {
+    const incident = raw.get(id);
+    if (incident?.running_operation_id === operationId) raw.set(id, { ...incident, running_operation_id: null });
+  }
+  /** 제안서만 다시 읽어 넣는다(보던 재생 시각 · 탭 · 지도 · 대화는 그대로). */
+  async function reloadProposal(id: string, proposalId: string | undefined, signal: AbortSignal, epoch: number) {
+    const data = await source.loadIncident(id, 'COMMANDER', signal, undefined, undefined, proposalId);
+    if (!alive(epoch) || state.incId !== id || pendingIncident) return;
+    const t = IS(id).t;
+    install(data);
+    IS(id).t = t;
+    await histories(id, signal, epoch, false);
+    if (alive(epoch) && state.incId === id) host.refresh();
+  }
+  async function watchProposal(id: string, operationId: string) {
+    markProposal(id, operationId);
+    await task(async (signal, epoch) => {
+      const mine = () => alive(epoch) && proposalJobs.get(id)?.id === operationId;
+      try {
+        const operation = await waitForOperation(
+          source.client,
+          { incident_id: id, operation_id: operationId },
+          { signal, maxWaitMs: 30 * 60_000 },
+        );
+        if (!mine()) return;
+        if (operation.status === 'FAILED')
+          throw new Error(operation.error?.message ?? '제안서를 만드는 중 오류가 발생했습니다.');
+        if (!operation.result?.proposal_id) throw new Error('[필요한 정보: 제안 생성 성공 작업의 result.proposal_id]');
+        proposalJobs.delete(id);
+        settleOperation(id, operationId);
+        if (state.incId !== id || pendingIncident) return;
+        await reloadProposal(id, operation.result.proposal_id, signal, epoch);
+      } catch (cause) {
+        if (signal.aborted || !mine()) {
+          if (!signal.aborted && alive(epoch)) throw cause; // 만든 뒤 다시 읽기 실패
+          return;
+        }
+        settleOperation(id, operationId);
+        failProposal(id, cause);
+      }
+    });
+  }
+  /** 새로고침 · 다시 로그인 · 산불을 다시 골랐을 때 서버에서 돌던 제안서 작업을 이어서 기다린다. */
+  async function resumeProposal(id: string) {
+    const operationId = raw.get(id)?.running_operation_id;
+    if (!operationId || state.role !== 'commander' || proposalRunning(id) || predictionOperations.get(id)?.id === operationId) return;
+    const epoch = generation;
+    let operation: C.Operation | null = null;
+    try {
+      operation = validateOperation(
+        await source.client.request('PRED-05', { path: { incident_id: id, operation_id: operationId } }),
+        operationId,
+      );
+    } catch {
+      // 다른 사람이 요청한 작업은 볼 수 없다(404) → 산불 상세로 끝났는지만 본다
+    }
+    if (!alive(epoch) || state.incId !== id || proposalRunning(id)) return;
+    if (!operation) return followOperation(id, operationId);
+    if (operation.kind !== 'PROPOSAL_REGENERATION') return;
+    if (operation.status === 'QUEUED' || operation.status === 'RUNNING') return watchProposal(id, operationId);
+    // 산불 상세를 읽은 뒤 끝났다 — 결과를 다시 읽는다
+    settleOperation(id, operationId);
+    if (operation.status === 'FAILED') return failProposal(id, new Error(operation.error?.message ?? '제안서를 만드는 중 오류가 발생했습니다.'));
+    const proposalId = operation.result?.proposal_id;
+    await task((signal, taskEpoch) => reloadProposal(id, proposalId, signal, taskEpoch));
+  }
+  const following = new Set<string>();
+  /** 내가 조회할 수 없는 작업: 끝날 때까지 산불 상세만 보다가 그 산불을 다시 읽는다. */
+  async function followOperation(id: string, operationId: string) {
+    const key = `${id}:${operationId}`;
+    if (following.has(key)) return;
+    following.add(key);
+    try {
+      await task(async (signal, epoch) => {
+        while (alive(epoch) && state.incId === id) {
+          await delay(options.followIntervalMs ?? 10_000, signal);
+          if (!alive(epoch) || state.incId !== id || raw.get(id)?.running_operation_id !== operationId) return;
+          const incident = await source.api.incidents.get({ path: { incident_id: id }, signal });
+          if (!alive(epoch) || state.incId !== id) return;
+          if (incident.running_operation_id === operationId) continue;
+          settleOperation(id, operationId);
+          if (!pendingIncident) await select(id);
+          return;
+        }
+      });
+    } finally {
+      following.delete(key);
+    }
+  }
+  /** PROP-05: 예측은 있는데 제안서가 없거나 정정이 반영되지 않았을 때 다시 만든다. */
+  async function retryProposal() {
+    const id = state.incId;
+    if (!raw.has(id) || state.role !== 'commander' || pendingIncident || regenerating.has(id) || proposalRunning(id)) return;
+    regenerating.add(id);
+    try {
+      markProposal(id, null);
+      let operationId: string | null = null;
+      await task(async (signal, epoch) => {
+        try {
+          const incident = await source.api.incidents.get({ path: { incident_id: id }, signal });
+          if (!alive(epoch)) return;
+          raw.set(id, incident); // 새 화선이 왔으면 「다시 예측」 안내로 바뀐다
+          if (!incident.latest_prediction_id) throw new Error('예측이 없습니다. 확산 예측을 먼저 실행하십시오.');
+          if (incident.running_operation_id) { operationId = incident.running_operation_id; return; } // 이미 만드는 중
+          const operation = validateOperation(await source.api.proposals.regenerate({
+            path: { incident_id: id },
+            body: { expected_prediction_id: incident.latest_prediction_id, situation_revision: incident.situation_revision },
+            idempotencyKey: createIdempotencyKey(), signal,
+          }));
+          if (alive(epoch)) operationId = operation.id;
+        } catch (cause) {
+          if (signal.aborted || !alive(epoch)) return;
+          if (cause instanceof ApiError && ['REGENERATION_NOT_NEEDED', 'STALE_PREDICTION', 'STALE_SITUATION', 'OPERATION_RUNNING'].includes(cause.code)) {
+            proposalJobs.delete(id); // 화면이 본 상태가 옛것 — 다시 읽는다
+            if (state.incId === id) await select(id);
+          } else failProposal(id, cause);
+        }
+      });
+      if (operationId) void watchProposal(id, operationId);
+    } finally {
+      regenerating.delete(id);
+    }
+  }
+  function proposalJob(): ProposalJobView {
+    const none: ProposalJobView = { state: 'none', reprediction: false };
+    const data = snapshot.get(state.incId), incident = raw.get(state.incId), job = proposalJobs.get(state.incId);
+    if (!incident || state.role !== 'commander' || pendingIncident || incident.status === 'ENDED') return none;
+    if (job?.status === 'RUNNING') return { ...none, state: 'running' };
+    const latest = incident.latest_prediction_id;
+    const missing = !!latest && data?.proposal.status === 'ready' && data.proposal.data?.prediction_id !== latest;
+    const reprediction = missing && incident.needs_reprediction;
+    if (job?.status === 'FAILED' && (missing || incident.proposal_stale)) return { state: 'failed', reprediction };
+    if (!missing || state.predicting) return none;
+    // 예측은 있는데 제안서가 없음: 도는 작업이 있으면 준비 중, 없으면 끊겼거나 새로고침 전에 실패한 것
+    return incident.running_operation_id ? { ...none, state: 'running' } : { state: 'failed', reprediction };
   }
   async function end() {
     const incident = raw.get(state.incId);
@@ -844,6 +1017,7 @@ export function createScreenBridge(
       incident.status !== 'IN_PROGRESS'
     )
       return;
+    if (blockedByProposal(incident.id, '종료')) return;
     ending = true;
     try {
       await task(async (signal, epoch) => {
@@ -954,7 +1128,26 @@ export function createScreenBridge(
   async function regenerationResult(id: string, initial: C.Operation, signal: AbortSignal) {
     validateOperation(initial);
     if (initial.kind !== 'PROPOSAL_REGENERATION') throw new Error('[필요한 정보: 제안 재생성 작업 종류]');
-    const result = ['SUCCEEDED', 'FAILED'].includes(initial.status) ? initial : await waitForOperation(source.client, { incident_id: id, operation_id: initial.id }, { signal });
+    markProposal(id, initial.id);
+    const epoch = generation;
+    try {
+      const result = await regenerationDone(id, initial, signal);
+      if (alive(epoch)) {
+        proposalJobs.delete(id);
+        settleOperation(id, initial.id);
+        if (state.incId === id) host.refresh();
+      }
+      return result;
+    } catch (cause) {
+      if (alive(epoch) && !signal.aborted) {
+        settleOperation(id, initial.id);
+        failProposal(id, cause);
+      }
+      throw cause;
+    }
+  }
+  async function regenerationDone(id: string, initial: C.Operation, signal: AbortSignal) {
+    const result = ['SUCCEEDED', 'FAILED'].includes(initial.status) ? initial : await waitForOperation(source.client, { incident_id: id, operation_id: initial.id }, { signal, maxWaitMs: 30 * 60_000 });
     if (result.kind !== 'PROPOSAL_REGENERATION') throw new Error('[필요한 정보: 제안 재생성 완료 작업 종류]');
     if (result.status === 'FAILED') throw new Error(`${result.error?.code ?? 'REGENERATION_FAILED'}: ${result.error?.message ?? '제안 재생성 실패'}`);
     if (!result.result?.proposal_id) throw new Error('[필요한 정보: 재생성 성공 작업의 result.proposal_id]');
@@ -974,6 +1167,7 @@ export function createScreenBridge(
     if (state.role !== 'commander' || state.incId !== id || pendingIncident || selection !== selected) {
       host.notice('산불 선택이 변경되었습니다. 현재 산불에서 정정 확인안을 다시 요청하십시오.'); return;
     }
+    if (blockedByProposal(id, '상황 정정')) return;
     if (Date.parse(preview.expires_at) <= Date.now() || raw.get(id)?.situation_revision !== preview.situation_revision) {
       host.notice('정정 확인안이 만료되었거나 상황이 바뀌었습니다. 확인안을 다시 요청하십시오.'); return;
     }
@@ -1015,6 +1209,8 @@ export function createScreenBridge(
           );
         }
         if (alive(epoch) && current()) await select(id, false, undefined, proposalId);
+        // 만드는 동안 다른 산불을 보고 돌아왔으면 새 제안서만 넣는다
+        else if (alive(epoch) && proposalId && state.incId === id && !pendingIncident) await reloadProposal(id, proposalId, signal, epoch);
       });
     } finally { confirming.delete(preview.confirmation_token); }
   }
@@ -1415,6 +1611,8 @@ export function createScreenBridge(
     weather: () => currentWeather,
     predictionOperation: () => predictionOperations.get(state.incId),
     predictionFailure: () => errors.get(`${state.incId}.predict`),
+    proposalJob,
+    retryProposal,
     proposalStale: () => {
       const data = snapshot.get(state.incId);
       return !!data && (data.incident.proposal_stale || (data.proposal.status === 'ready' && !!data.proposal.data && data.proposal.data.prediction_id !== (data.prediction.status === 'ready' ? data.prediction.data.id : data.incident.latest_prediction_id)));

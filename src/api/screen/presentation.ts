@@ -39,6 +39,21 @@ export const stateText = (state: DataState, subject: string) =>
     partial: `${subject} 일부 제공`,
     loading: `${subject} 불러오는 중…`,
   })[state];
+/** 예측과 따로 만드는 제안서의 상태(두 묶음, 11/24). none = 안내할 것 없음.
+ * reprediction = 새 화선이 보고돼 다시 만들기보다 예측이 먼저 */
+export interface ProposalJobView {
+  state: 'none' | 'running' | 'failed';
+  reprediction: boolean;
+}
+/** 대응제안 탭의 안내. 문구는 한 줄만 둔다(사용자 11/24): 준비 중 · 실패(다시 생성) · 재예측 */
+export function proposalJobHTML(job: ProposalJobView) {
+  if (job.state === 'none') return '';
+  if (job.state === 'running')
+    return '<div class="prop-job running" role="status"><span class="job-spin" aria-hidden="true"></span><b>대응 제안 준비 중</b></div>';
+  if (job.reprediction)
+    return '<div class="prop-job failed" role="alert"><b>새 화선이 보고되어 다시 예측이 필요합니다</b></div>';
+  return '<div class="prop-job failed" role="alert"><b>대응 제안을 만들지 못했습니다</b><button id="btn-proposal-retry" class="primary">다시 생성</button></div>';
+}
 export const escapeHTML = (value: unknown) =>
   String(value ?? '').replace(
     /[&<>"']/g,
