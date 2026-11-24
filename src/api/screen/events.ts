@@ -105,7 +105,9 @@ export function eventViews(logs: readonly EventLog[], context: EventContext = {}
       }
       case 'PROPOSAL_FAILED': {
         const message = text(d.message);
-        return { kind: '제안', text: message ? `대응 제안 재생성 실패 — ${message}` : '대응 제안 재생성 실패' };
+        // 정정이 없으면 예측 뒤 첫 제안서 생성(두 묶음, 11/24)
+        const what = 'correction_id' in d && d.correction_id === null ? '대응 제안 생성 실패' : '대응 제안 재생성 실패';
+        return { kind: '제안', text: message ? `${what} — ${message}` : what };
       }
       case 'QA_NO_EVIDENCE': {
         if (d.full === true) return { kind: '근거 부족', text: 'AI 답변 근거 없음' };

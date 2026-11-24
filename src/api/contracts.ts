@@ -289,7 +289,8 @@ export interface Operation {
   kind: 'PREDICTION' | 'PROPOSAL_REGENERATION';
   status: OperationStatus;
   stage: string | null;
-  result: { prediction_id?: Id; proposal_id?: Id; correction_id?: Id; mode?: 'LIVE' | 'DEMO_ELMFIRE' | null; predictor?: string } | null;
+  /** proposal_operation_id: 예측 작업이 끝나며 넘긴 제안서 만들기 작업(서버 11/24 두 묶음). 없으면 예전 서버(제안서까지 한 작업) */
+  result: { prediction_id?: Id; proposal_operation_id?: string; proposal_id?: Id; correction_id?: Id | null; mode?: 'LIVE' | 'DEMO_ELMFIRE' | null; predictor?: string } | null;
   error: { code: string; message: string } | null;
 }
 
