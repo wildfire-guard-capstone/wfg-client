@@ -190,9 +190,9 @@ export const MapToolbar = memo(function MapToolbar() {
             {'—'}
           </div>
           <select id="speed-sel" title="재생 속도" defaultValue="2">
-            <option value="1">{'1×'}</option>
-            <option value="2">{'2×'}</option>
-            <option value="4">{'4×'}</option>
+            <option value="1">{'1배속'}</option>
+            <option value="2">{'2배속'}</option>
+            <option value="4">{'4배속'}</option>
           </select>
         </div>
       </div>

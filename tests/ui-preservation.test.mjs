@@ -62,6 +62,8 @@ test('original components, CSS, map models and scenario data stay unchanged outs
           : file === 'src/components/MapToolbar.tsx'
             ? readFileSync(new URL(file, root), 'utf8')
               .replace(/className="blue lyr-btn off"(\s+data-layer="(?:water|routes)")/g, 'className="blue lyr-btn"$1')
+            // QA 3-6: 재생 속도를 쉬운 말로(2× → 2배속)
+            .replace(/\{'(\d)배속'\}/g, "{'$1×'}")
           : file === 'src/main.tsx'
             ? readFileSync(new URL(file, root), 'utf8').replace("import './styles/stabilization.css';\n", '')
             : readFileSync(new URL(file, root))),

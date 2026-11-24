@@ -566,3 +566,31 @@ body.side-resizing {
   background: #fbd5d5;
   color: #9b1c1c;
 }
+
+/* QA 3-6: 예측 뒤 상단 줄이 넘쳐 스크롤바가 시각을 가리던 것 — 재생 칸이 남는 폭에 맞춰 줄고 시각은 한 줄로 */
+#pred-bar {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+#playbar {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+#playbar > * {
+  flex-shrink: 0;
+}
+#playbar #time-slider {
+  flex: 0 1 150px;
+  min-width: 60px;
+}
+#time-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+#time-label small {
+  display: inline;
+  font-size: 11px;
+}

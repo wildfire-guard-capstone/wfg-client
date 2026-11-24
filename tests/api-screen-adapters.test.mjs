@@ -223,3 +223,15 @@ test('API demo uses original main fire geometry and seed accounts instead of rec
     after.slices.data.features[4].properties.area_ha,
   );
 });
+
+test('QA 3-12: only the estimated vulnerable population is shown as a whole number', () => {
+  const raw = createFixtures()['RISK-01'];
+  const set = (code, value) => Object.assign(raw.factors.find((f) => f.code === code), { raw_value: value });
+  set('vulnerable_population', 93.839);
+  set('wind_speed', 5.033);
+  const value = (key, r = raw) => riskView(r, createScenario()).vars.find((v) => v.key === key).value;
+  assert.equal(value('vulnerable_population'), 94);
+  assert.equal(value('wind_speed'), 5.033);
+  set('vulnerable_population', null);
+  assert.equal(value('vulnerable_population'), null);
+});

@@ -452,7 +452,8 @@ export function riskView(raw: C.Risk | null, scenario: Scenario): RiskResult {
         reason: f.reason, source: f.source, valueAt: f.value_at, included: f.included,
         w: f.weight,
         mode: f.code === 'aspect' && typeof f.raw_value !== 'number' ? '' : meta?.mode ?? '',
-        value: f.raw_value,
+        // 취약계층 수는 리 인구를 주택 비율로 나눈 추정이라 소수가 나온다 — 사람 수는 정수로 보인다(QA 3-12)
+        value: f.code === 'vulnerable_population' && typeof f.raw_value === 'number' ? Math.round(f.raw_value) : f.raw_value,
         grade: f.grade,
         wn: f.included ? (den > 0 ? f.weight / den : null) : 0,
       };
