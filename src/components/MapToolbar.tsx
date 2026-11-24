@@ -31,11 +31,11 @@ export const MapToolbar = memo(function MapToolbar() {
         <button
           className="blue lyr-btn"
           data-layer="villages"
-          title="마을(화선이 닿으면 빨강)"
+          title="행정리(화선이 닿으면 빨강)"
           onClick={(e) => act('toggleLayer', e.currentTarget)}
         >
           <i className="sw sw-village"></i>
-          {'마을'}
+          {'행정리'}
         </button>
         <button
           className="blue lyr-btn off"

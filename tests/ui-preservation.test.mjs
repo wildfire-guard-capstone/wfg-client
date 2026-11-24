@@ -64,6 +64,9 @@ test('original components, CSS, map models and scenario data stay unchanged outs
               .replace(/className="blue lyr-btn off"(\s+data-layer="(?:water|routes)")/g, 'className="blue lyr-btn"$1')
             // QA 3-6: 재생 속도를 쉬운 말로(2× → 2배속)
             .replace(/\{'(\d)배속'\}/g, "{'$1×'}")
+            // 11/25: 마을 아이콘을 행정리 아이콘으로 바꿨다
+            .replace('title="행정리(화선이 닿으면 빨강)"', 'title="마을(화선이 닿으면 빨강)"')
+            .replace("{'행정리'}", "{'마을'}")
           : file === 'src/main.tsx'
             ? readFileSync(new URL(file, root), 'utf8').replace("import './styles/stabilization.css';\n", '')
             : readFileSync(new URL(file, root))),
@@ -79,6 +82,10 @@ test('original map setup, layer styles, markers and drawing functions stay ident
     readFileSync(new URL('src/runtime/createMockRuntime.ts', root), 'utf8')
       .replace("${dataBridge ? '생성된 대응 제안이 없습니다.' : '확산 예측을 실행하면 제안이 생성됩니다.'}", '확산 예측을 실행하면 제안이 생성됩니다.')
       .replace('${state.axis} ${all.length}항목 중 발동', '${state.axis} 7항목 중 발동')
+      // 11/25: 행정리 아이콘(h:)이 마을 아이콘의 화선 도달 표시 · 켜고 끄기를 이어받는다.
+      .replace("      markAdminVillages(() => false);\n", '')
+      .replace("    markAdminVillages((p) => t > 0 && inAny(p, t - 1));\n", '')
+      .replace("show(apiMode ? 'h:' : 'v:', layerOn('villages'))", "show('v:', layerOn('villages'))")
       // P2 replaces the selected inline mark only with a block-safe highlight.
       .replace('`<div class="ev-highlight">${contentHTML(c.text)}</div>`', '`<mark>${contentHTML(c.text)}</mark>`'),
     ts.ScriptTarget.Latest,

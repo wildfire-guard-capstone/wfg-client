@@ -8,6 +8,8 @@ export type MapWindow = Awaited<ReturnType<ApiDataSource['mapWindow']>>;
 export type MapMarker = {
   key: string; id: string; entity: C.MapEntityType; name: string;
   kind: string; cls: string; icon: string; position: LngLat;
+  /** 행정리가 속한 법정리 — 대피 상태는 법정리 값만 있다. */
+  villageId?: string;
 };
 const collection = (features: Feature[]): FeatureCollection => ({ type: 'FeatureCollection', features });
 /** Point symbols use an existing server coordinate; full wire geometries remain intact. */
@@ -30,14 +32,24 @@ export function mapRenderData(snapshot: MapWindow) {
   const areas = snapshot.areas.status === 'ready' ? snapshot.areas.data : [];
   const names = new Map(areas.map((area) => [area.id, area.name]));
   const villages: Scenario['villages'] = [], facilities: Scenario['facilities'] = [], shelters: Scenario['shelters'] = [], agencies: Scenario['agencies'] = [];
-  const markers: MapMarker[] = [];
+  const markers: MapMarker[] = [], villageNames = new Map<string, string>();
   for (const feature of get('villages')) {
     const p = feature.properties as C.Village;
     const position = mapPosition(p.label_point);
     if (!position) continue;
     const emd = names.get(p.admin_area_id) ?? needed('마을 소속 읍면동명');
+    villageNames.set(p.id, `${emd} ${p.name}`);
     villages.push({ id: p.id, name: p.name, emd, lng: position[0], lat: position[1], pop: p.population, hh: NaN, elderly: p.pop65_est ?? NaN, disabled: NaN });
-    markers.push({ key: `v:${p.id}`, id: p.id, entity: 'village', name: p.name, kind: `${emd} 마을`, cls: 'village', icon: 'house', position });
+    // 법정리는 아이콘 없이 이름 글자만
+    markers.push({ key: `v:${p.id}`, id: p.id, entity: 'village', name: p.name, kind: `${emd} 마을`, cls: 'beop', icon: '', position });
+  }
+  const adminVillages: { id: string; lng: number; lat: number }[] = [];
+  for (const feature of get('admin_villages')) {
+    const p = feature.properties as Omit<C.AdminVillage, 'geometry'>;
+    const position = mapPosition(p.hall_point);
+    if (!position) continue;
+    adminVillages.push({ id: p.id, lng: position[0], lat: position[1] });
+    markers.push({ key: `h:${p.id}`, id: p.id, entity: 'admin_village', name: p.name, kind: villageNames.get(p.village_id) ?? needed('행정리 소속 법정리명'), cls: 'village', icon: 'house', position, villageId: p.village_id });
   }
   for (const feature of get('facilities')) {
     const p = feature.properties as Omit<C.Facility, 'geometry'>;
@@ -65,6 +77,7 @@ export function mapRenderData(snapshot: MapWindow) {
   }
   const mapped = (id: string, entity: C.MapEntityType, transform: (p: Record<string, unknown>) => object = (p) => p) => get(id).map((f) => ({ ...f, properties: { ...transform(f.properties as unknown as Record<string, unknown>), api_entity_type: entity, api_entity_id: String(f.properties.id) } }));
   const boundaries = collection(mapped('admin_areas', 'admin_area', (p) => ({ ...p, level: String(p.level).toLowerCase() })));
+  const beop = collection(get('villages').map((f) => ({ type: 'Feature', properties: { name: (f.properties as C.Village).name }, geometry: f.geometry })));
   const roads = collection([...mapped('road', 'map_feature'), ...mapped('track', 'map_feature')].map((f) => {
     const p = f.properties as Record<string, unknown>, attrs = p.attrs as C.JsonObject | undefined;
     return { ...f, properties: { ...p, kind: attrs?.highway ?? p.kind, ref: attrs?.ref } };
@@ -72,7 +85,7 @@ export function mapRenderData(snapshot: MapWindow) {
   const power = collection(mapped('power_line', 'map_feature'));
   // Existing house styling is a point symbol; these are actual server point geometries.
   const houses = collection(mapped('house', 'map_feature').filter((f) => f.geometry.type === 'Point'));
-  return { villages, facilities, shelters, agencies, markers, boundaries, roads, power, houses };
+  return { villages, adminVillages, facilities, shelters, agencies, markers, boundaries, beop, roads, power, houses };
 }
 
 /** Retain previously fetched facts only for failed parts, never for a successful empty response. */
