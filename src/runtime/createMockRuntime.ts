@@ -2,6 +2,7 @@ import { createAuthSession, browserSessionStorage } from '../api/auth-session';
 import { demoAccount, demoAccountError } from '../api/demo-accounts';
 import { resourceCellText } from '../api/screen/resources';
 import { richText, contentHTML, withCitations, comparisonHTML, sectionHTML, missingHTML, stateText, remoteState, canCorrectPerimeter, proposalJobHTML } from '../api/screen/presentation';
+import { sourceHTML } from '../api/screen/source-text';
 import type {
   Feature,
   FeatureCollection,
@@ -2941,7 +2942,7 @@ export function createMockRuntime() {
           </div>
           ${canOperate() && !api ? `<div class="actions"><button class="ask-btn" data-id="${b.id}">이 항목 질문</button></div>` : ''}`;
       return `<div class="card axis-${b.axis}${api ? ' api open' : ''}" data-id="${b.id}">
-        <div class="head"><span class="arrow">▶</span><span class="nm">${esc(b.name)}</span>${changed ? `<span class="chg-tag" data-chg="${b.id}" title="직전 버전 대비 변경 내용 보기">변경</span>` : ''}<span class="st">${badges(b.apiSections ? (b.apiState && b.apiState !== 'GENERATED' ? [({ PARTIAL: '부분 생성', FAILED: '생성 실패', NOT_TRIGGERED: '미발동', REUSED: '재사용' })[b.apiState]] : []) : b.status)}</span></div>
+        <div class="head"><span class="arrow">▶</span><span class="nm">${esc(b.name)}</span>${changed ? `<span class="chg-tag" data-chg="${b.id}" title="직전 버전 대비 변경 내용 보기">변경</span>` : ''}<span class="st">${badges(b.apiSections ? (({ FAILED: ['생성 실패'], NOT_TRIGGERED: ['미발동'], REUSED: ['재사용'] })[b.apiState] ?? []) : b.status)}</span></div>
         <div class="sum">
           <div class="text">${api ? sectionHTML(b.apiSections, b.apiChunks || {}, b.id, undefined, { gatherNotes: true, agencyPreview: b.id === 'S6' }) + (bluf ? (b.evidence.length ? sources : '') : `<div class="card-basis fold" role="group" aria-label="판정 이유 · 출처"><button type="button" class="fold-toggle" aria-expanded="false">판정 이유 · 출처</button><div class="fold-body">${basis}</div></div>`) + missingHTML(b.apiSections, b.withheld.map((w) => ({ field: w.slot, reason: w.why }))) : citeHTML(b.text, b.id)}</div>
           ${b.apiSections ? '' : b.withheld.map((w) => `<div class="withheld"><b>${esc(w.slot)}</b> — ${richText(w.why || NO_EVIDENCE)}</div>`).join('')}
@@ -3124,7 +3125,7 @@ export function createMockRuntime() {
       b.evidence
         .map((e) => {
           const c = S.evidence[e.key];
-          return `<div class="ev-chunk" style="${e.k === k ? 'border-color:#e0a325;background:#fffbe6' : ''}"><div class="meta">[${e.k}] ${esc(c.doc)} ${esc(c.page)} · ${esc(c.section)}</div><div>${e.k === k ? `<div class="ev-highlight">${contentHTML(c.text)}</div>` : contentHTML(c.text)}</div></div>`;
+          return `<div class="ev-chunk" style="${e.k === k ? 'border-color:#e0a325;background:#fffbe6' : ''}"><div class="meta">[${e.k}] ${esc(c.doc)} ${esc(c.page)} · ${esc(c.section)}</div><div>${e.k === k ? `<div class="ev-highlight">${sourceHTML(c.text)}</div>` : sourceHTML(c.text)}</div></div>`;
         })
         .join('');
     $('#evidence-drawer').classList.add('on');

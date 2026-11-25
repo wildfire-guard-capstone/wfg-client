@@ -624,3 +624,80 @@ body:not(.satmap) .mk.beop .lb {
 #map.far .mk.village .ico svg {
   display: none;
 }
+
+/* 출처 창 원문(2026-11-25): 매뉴얼 표는 표로, 「o · - · ※」 줄은 내어쓰기로 */
+.src-line {
+  overflow-wrap: anywhere;
+}
+.src-line.l1 {
+  padding-left: 1.1em;
+  text-indent: -1.1em;
+}
+.src-line.l2 {
+  padding-left: 2em;
+  text-indent: -0.9em;
+}
+.src-caption {
+  margin: 4px 0 3px;
+  font-weight: 700;
+}
+.src-caption .src-note {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 400;
+  color: #666;
+}
+.source-table {
+  max-width: 100%;
+  margin: 3px 0 6px;
+  overflow-x: auto;
+}
+.source-table table {
+  width: 100%;
+  table-layout: auto;
+  background: #fff;
+}
+.source-table table.wide {
+  min-width: 430px;
+}
+.source-table table th,
+.source-table table td {
+  padding: 4px 6px;
+  vertical-align: top;
+  white-space: normal;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+.source-table table th {
+  text-align: center;
+  vertical-align: middle;
+}
+.source-table table td.src-label {
+  min-width: 6.5em;
+  background: #f5f6f8;
+  font-weight: 600;
+  text-align: center;
+  vertical-align: middle;
+}
+.source-table .src-line.l2 {
+  padding-left: 1.4em;
+}
+.source-table td.src-label .src-line {
+  padding-left: 0;
+  text-indent: 0;
+}
+/* 원문에 표가 있으면 창을 넓힌다 */
+#evidence-drawer:has(.source-table) {
+  width: max(480px, 34vw);
+}
+@media (max-width: 1000px) {
+  #evidence-drawer:has(.source-table) {
+    width: min(480px, 100%);
+  }
+}
+@media (max-width: 600px) {
+  #evidence-drawer:has(.source-table) {
+    width: auto;
+  }
+}
