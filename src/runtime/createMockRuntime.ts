@@ -3,6 +3,7 @@ import { demoAccount, demoAccountError } from '../api/demo-accounts';
 import { resourceCellText } from '../api/screen/resources';
 import { richText, contentHTML, withCitations, comparisonHTML, sectionHTML, missingHTML, stateText, remoteState, canCorrectPerimeter, proposalJobHTML } from '../api/screen/presentation';
 import { sourceHTML } from '../api/screen/source-text';
+import { correctionCard } from '../api/screen/correction-card';
 import type {
   Feature,
   FeatureCollection,
@@ -2942,7 +2943,7 @@ export function createMockRuntime() {
           </div>
           ${canOperate() && !api ? `<div class="actions"><button class="ask-btn" data-id="${b.id}">이 항목 질문</button></div>` : ''}`;
       return `<div class="card axis-${b.axis}${api ? ' api open' : ''}" data-id="${b.id}">
-        <div class="head"><span class="arrow">▶</span><span class="nm">${esc(b.name)}</span>${changed ? `<span class="chg-tag" data-chg="${b.id}" title="직전 버전 대비 변경 내용 보기">변경</span>` : ''}<span class="st">${badges(b.apiSections ? (({ FAILED: ['생성 실패'], NOT_TRIGGERED: ['미발동'], REUSED: ['재사용'] })[b.apiState] ?? []) : b.status)}</span></div>
+        <div class="head"><span class="arrow">▶</span><span class="nm">${esc(b.name)}</span>${changed ? `<span class="chg-tag" data-chg="${b.id}" title="직전 버전 대비 변경 내용 보기">변경</span>` : ''}<span class="st">${badges(b.apiSections ? (({ FAILED: ['생성 실패'], NOT_TRIGGERED: ['미발동'] })[b.apiState] ?? []) : b.status)}</span></div>
         <div class="sum">
           <div class="text">${api ? sectionHTML(b.apiSections, b.apiChunks || {}, b.id, undefined, { gatherNotes: true, agencyPreview: b.id === 'S6' }) + (bluf ? (b.evidence.length ? sources : '') : `<div class="card-basis fold" role="group" aria-label="판정 이유 · 출처"><button type="button" class="fold-toggle" aria-expanded="false">판정 이유 · 출처</button><div class="fold-body">${basis}</div></div>`) + missingHTML(b.apiSections, b.withheld.map((w) => ({ field: w.slot, reason: w.why }))) : citeHTML(b.text, b.id)}</div>
           ${b.apiSections ? '' : b.withheld.map((w) => `<div class="withheld"><b>${esc(w.slot)}</b> — ${richText(w.why || NO_EVIDENCE)}</div>`).join('')}
@@ -3883,7 +3884,7 @@ export function createMockRuntime() {
   function proposeCorrection(
     cs,
     q,
-    prepared?: { rows: unknown[][]; notes: string[]; confirm: () => void },
+    prepared?: { rows: unknown[][]; count: number; notes: string[]; confirm: () => void },
   ) {
     const I = inc();
     if (I.status === '종료') {
@@ -3923,11 +3924,11 @@ export function createMockRuntime() {
         ];
     addMsg(
       'sys',
-      `상황 정정으로 판정 — 변화 ${prepared ? rows.length : ok.length}건의 정정 확인 카드를 엽니다`,
+      `상황 정정으로 판정 — 변화 ${prepared ? prepared.count : ok.length}건의 정정 확인 카드를 엽니다`,
     );
     openModal(
       '상황 정정 확인',
-      `<div class="small muted" style="margin-bottom:8px">입력: “${esc(q)}” · 해석한 변화 <b>${prepared ? rows.length : ok.length}건</b></div><table class="grid"><thead><tr><th>대상</th><th>항목</th><th>이전</th><th>변경</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(String(r[0]))}</td><td>${esc(r[1])}</td><td>${esc(String(r[2]))}</td><td><b>${esc(String(r[3]))}</b></td></tr>`).join('')}</tbody></table>${notes.length ? `<div class="corr-note">${notes.map((n) => `<div>⚠ ${esc(n)}</div>`).join('')}</div>` : ''}<div class="small muted" style="margin-top:8px">확인하면 바뀐 상황 값을 모두 저장하고 이벤트 로그에 기록한 뒤, 예측(P1~P8)은 그대로 둔 채 규칙 판정과 대응 제안만 다시 만들어 새 버전을 저장합니다. 확인 전에는 아무것도 저장하지 않습니다.</div>`,
+      `<div class="small muted" style="margin-bottom:8px">입력: “${esc(q)}” · 해석한 변화 <b>${prepared ? prepared.count : ok.length}건</b></div><table class="grid"><thead><tr><th>대상</th><th>항목</th><th>이전</th><th>변경</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(String(r[0]))}</td><td>${esc(r[1])}</td><td>${esc(String(r[2]))}</td><td><b>${esc(String(r[3]))}</b></td></tr>`).join('')}</tbody></table>${notes.length ? `<div class="corr-note">${notes.map((n) => `<div>⚠ ${esc(n)}</div>`).join('')}</div>` : ''}<div class="small muted" style="margin-top:8px">확인하면 바뀐 상황 값을 모두 저장하고 이벤트 로그에 기록한 뒤, 예측(P1~P8)은 그대로 둔 채 규칙 판정과 대응 제안만 다시 만들어 새 버전을 저장합니다. 확인 전에는 아무것도 저장하지 않습니다.</div>`,
       [
         {
           label: '취소',
@@ -5174,16 +5175,8 @@ export function createMockRuntime() {
     preview: CorrectionPreview,
     confirm: () => void,
   ) {
-    const rows = preview.changes.map((change) => [
-      change.target === 'village'
-        ? change.target_name || change.target_id
-        : change.target,
-      change.label || change.item,
-      change.before,
-      change.after,
-    ]);
     proposeCorrection(null, preview.input_text, {
-      rows,
+      ...correctionCard(preview.changes),
       notes: [
         ...preview.notes,
         ...preview.ignored.map((item) => `${item.text}: ${item.reason}`),
