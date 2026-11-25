@@ -86,6 +86,8 @@ test('original map setup, layer styles, markers and drawing functions stay ident
       .replace("      markAdminVillages(() => false);\n", '')
       .replace("    markAdminVillages((p) => t > 0 && inAny(p, t - 1));\n", '')
       .replace("show(apiMode ? 'h:' : 'v:', layerOn('villages'))", "show('v:', layerOn('villages'))")
+      // 11/25: 출처 창 원문은 sourceHTML(매뉴얼 표 · 줄 나누기)로 그린다.
+      .replace('`<div class="ev-highlight">${sourceHTML(c.text)}</div>` : sourceHTML(c.text)', '`<div class="ev-highlight">${contentHTML(c.text)}</div>` : contentHTML(c.text)')
       // P2 replaces the selected inline mark only with a block-safe highlight.
       .replace('`<div class="ev-highlight">${contentHTML(c.text)}</div>`', '`<mark>${contentHTML(c.text)}</mark>`'),
     ts.ScriptTarget.Latest,

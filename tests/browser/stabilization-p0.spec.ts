@@ -274,7 +274,8 @@ test('P0 B: six cards per axis, four states, E6 evidence/question/diff and versi
   await expect(page.locator('#cards [data-id="S1"] .st')).toContainText(
     '생성 완료',
   );
-  await expect(page.locator('#cards [data-id="S2"] .st')).toContainText(
+  // 11/25: 「부분 생성」은 화면에 보이지 않는다
+  await expect(page.locator('#cards [data-id="S2"] .st')).not.toContainText(
     '부분 생성',
   );
   await expect(page.locator('#cards [data-id="S3"] .st')).toContainText(

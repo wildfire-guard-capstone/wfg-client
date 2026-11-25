@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { createFixtures, MOCK_ACCOUNTS } from '../../src/api/mock/fixtures';
 import { createMockFetch } from '../../src/api/mock/transport';
-import { tableText } from '../../src/api/screen/table-text';
+import { sourceHTML } from '../../src/api/screen/source-text';
 
 test.use({ screenshot: 'off' });
 const replayPath = process.env.WFG_TABLE_REPLAY_PATH;
@@ -385,17 +385,16 @@ for (const width of [1440, 390]) {
                 .locator('.cite')
                 .first()
                 .evaluate((e) => (e as HTMLElement).click());
-              const expected = item.evidence.flatMap((e: any) =>
-                tableText(e.text),
-              );
+              // 11/25: 출처 창은 sourceHTML로 그린다(원문 보존 안내 없이 표로)
+              const expected = item.evidence
+                .map((e: any) => sourceHTML(e.text))
+                .join('');
               await expect(
                 page.locator('#ev-body .ev-chunk table'),
-              ).toHaveCount(expected.filter((p) => p.type === 'table').length);
+              ).toHaveCount((expected.match(/<table/g) || []).length);
               await expect(
                 page.locator('#ev-body .ev-chunk .proposal-table-raw'),
-              ).toHaveCount(
-                expected.filter((p) => p.type === 'unresolved').length,
-              );
+              ).toHaveCount(0);
               await inside(page, '#evidence-drawer');
               await page
                 .locator('#evidence-drawer')
