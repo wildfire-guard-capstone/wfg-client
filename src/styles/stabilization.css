@@ -701,3 +701,38 @@ body:not(.satmap) .mk.beop .lb {
     width: auto;
   }
 }
+
+/* 요소별 지표 ⓘ 변수 설명(11/25) — 마우스를 올리면 뜨고 떼면 사라진다 */
+.rv-info {
+  display: inline-block;
+  margin-left: 4px;
+  color: var(--gray, #8f8f8f);
+  font-size: 12px;
+  line-height: 1;
+  cursor: help;
+  user-select: none;
+}
+.rv-info:hover,
+.rv-info:focus-visible {
+  color: var(--blue, #2f5fb3);
+  outline: none;
+}
+.rv-tip {
+  position: fixed;
+  z-index: 10000;
+  max-width: 280px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: #1f2937;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 400;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  white-space: normal;
+  word-break: keep-all;
+}
+.rv-tip[hidden] {
+  display: none;
+}
