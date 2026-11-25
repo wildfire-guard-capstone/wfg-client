@@ -38,6 +38,7 @@ import { BOUNDARIES as STATIC_BOUNDARIES } from '../data/boundaries';
 import { OSM_LINES as STATIC_OSM_LINES } from '../data/osmLines';
 import { WATER_SOURCES } from '../data/waterSources';
 import { query, queryAll } from './dom';
+import { bindInfoTips, riskInfoHTML } from './info-tip';
 import { createLifecycle } from './lifecycle';
 import type {
   AppState,
@@ -2811,7 +2812,7 @@ export function createMockRuntime() {
           vs
             .map(
               (v) =>
-                `<tr data-factor="${esc(v.key)}"><td>${esc(v.name)}${dataBridge && (v.included === false || v.reason) ? `<span class="p1-factor-meta">${richText([v.included === false ? '계산 제외' : '', v.reason].filter(Boolean).join(' · '))}</span>` : ''}</td><td class="num">${v.value == null ? (dataBridge ? '미산출' : warnHTML('가져오지 못함')) : esc(varValueText(v))}</td><td style="text-align:center">${esc(v.unit || '—')}</td><td class="num">${numberText(v.wn, 3)}</td><td class="num">${riskChip(v.grade, 0)}</td></tr>`,
+                `<tr data-factor="${esc(v.key)}"><td>${esc(v.name)}${riskInfoHTML(v.key, v.name)}${dataBridge && (v.included === false || v.reason) ? `<span class="p1-factor-meta">${richText([v.included === false ? '계산 제외' : '', v.reason].filter(Boolean).join(' · '))}</span>` : ''}</td><td class="num">${v.value == null ? (dataBridge ? '미산출' : warnHTML('가져오지 못함')) : esc(varValueText(v))}</td><td style="text-align:center">${esc(v.unit || '—')}</td><td class="num">${numberText(v.wn, 3)}</td><td class="num">${riskChip(v.grade, 0)}</td></tr>`,
             )
             .join('')
         );
@@ -2824,6 +2825,7 @@ export function createMockRuntime() {
     );
     $('#modal').classList.add('wide');
     $('#modal').scrollTop = 0;
+    bindInfoTips(); // ⓘ에 마우스를 올리면 변수 설명(11/25)
     if (rk.hazard !== undefined) {
       // R = √(H × X): 가중치는 묶음마다 합 1이라 전체 합을 보이지 않는다
       const foot = $('#modal .rv tfoot tr');
