@@ -9,7 +9,11 @@ const escapeHTML = (s: string) =>
 
 /** 변수 이름 옆 ⓘ. 설명이 없는 변수는 빈 글 */
 export function riskInfoHTML(key: string, name: string): string {
-  const text = riskVarDescription(key);
+  return infoTipHTML(riskVarDescription(key) ?? '', name);
+}
+
+// ⓘ 하나: 마우스를 올리면 text가 뜬다(bindInfoTips). text가 없으면 그리지 않는다
+export function infoTipHTML(text: string, name: string): string {
   if (!text) return '';
   return `<span class="rv-info" tabindex="0" role="button" aria-label="${escapeHTML(name)} 설명" data-tip="${escapeHTML(text)}">ⓘ</span>`;
 }
