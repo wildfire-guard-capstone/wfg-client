@@ -38,7 +38,7 @@ import { BOUNDARIES as STATIC_BOUNDARIES } from '../data/boundaries';
 import { OSM_LINES as STATIC_OSM_LINES } from '../data/osmLines';
 import { WATER_SOURCES } from '../data/waterSources';
 import { query, queryAll } from './dom';
-import { bindInfoTips, riskInfoHTML } from './info-tip';
+import { bindInfoTips, infoTipHTML, riskInfoHTML } from './info-tip';
 import { createLifecycle } from './lifecycle';
 import type {
   AppState,
@@ -2733,13 +2733,14 @@ export function createMockRuntime() {
       : `<span>${numberText(rk.score, 2)}</span>`;
     if ($('#risk-pop').classList.contains('on')) renderRiskPop();
   }
-  // risk-2 묶음 머리 줄: 위해 H(기상·지형·연료·규모) · 노출 X(인프라·노출)
+  // risk-2 묶음 머리 줄: 위해 H(기상·지형·연료·규모) · 노출 X(인프라·노출). 뜻은 ⓘ에 마우스를 올리면(11/27)
   function riskGroupRow(rk: RiskResult, group: 'H' | 'X', cols: number) {
     const label = group === 'H' ? '위해 H' : '노출 X';
     const score = group === 'H' ? rk.hazard : rk.exposure;
-    return `<tr class="rk-grp"><td colspan="${cols - 1}"><b>${label}</b> <span class="small muted">(${group === 'H' ? '불이 얼마나 위험한가' : '사람·집이 얼마나 걸리는가'})</span></td><td class="num">${riskChip(score ?? null)}</td></tr>`;
+    const desc = group === 'H' ? '불이 얼마나 위험한가' : '사람·집이 얼마나 걸리는가';
+    return `<tr class="rk-grp"><td colspan="${cols - 1}"><b>${label}</b>${infoTipHTML(desc, label)}</td><td class="num">${riskChip(score ?? null)}</td></tr>`;
   }
-  // risk-2: 요소 표에 묶음 머리 줄(위해 H · 노출 X)과 식 한 줄을 덧붙인다(기존 표 마크업은 그대로)
+  // risk-2: 요소 표에 묶음 머리 줄(위해 H · 노출 X)을 덧붙인다(기존 표 마크업은 그대로). 계산식 줄은 11/27에 뺐다
   function addRiskGroups(body: HTMLElement, rk: RiskResult) {
     rk.factors.forEach((f, i) => {
       if (!f.group || f.group === rk.factors[i - 1]?.group) return;
@@ -2747,12 +2748,7 @@ export function createMockRuntime() {
         .querySelector(`.rk-fac tr[data-axis="${f.key}"]`)
         ?.insertAdjacentHTML('beforebegin', riskGroupRow(rk, f.group, 3));
     });
-    body
-      .querySelector('.rk-fac')
-      ?.insertAdjacentHTML(
-        'afterend',
-        `<div class="small muted rk-formula" style="margin-top:4px">산불 위험도 = √(위해 ${numberText(rk.hazard, 2)} × 노출 ${numberText(rk.exposure, 2)}) · 가중치는 묶음 안 비율</div>`,
-      );
+    bindInfoTips();
   }
   // 위험도 팝업: 숫자·4요소 점수·가중치 → 「요소별 지표」 팝업(23개 변수 표)
   function renderRiskPop() {

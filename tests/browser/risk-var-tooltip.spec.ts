@@ -70,8 +70,9 @@ test('요소별 지표: 22개 변수 모두 ⓘ — 마우스를 올리면 설�
   const h = await setup(page, 'PARTIAL');
   await page.locator('#risk-box').click();
   await page.locator('#btn-risk-vars').click();
-  const icons = page.locator('#modal table.rv .rv-info');
+  const icons = page.locator('#modal table.rv tr[data-factor] .rv-info');
   await expect(icons).toHaveCount(22);
+  await expect(page.locator('#modal table.rv tr.rk-grp .rv-info')).toHaveCount(2); // 위해 H · 노출 X(11/27)
   const tip = page.locator('.rv-tip');
   await expect(tip).toBeHidden();
   const slope = page.locator('#modal tr[data-factor="slope_up"] .rv-info');
@@ -91,5 +92,24 @@ test('요소별 지표: 22개 변수 모두 ⓘ — 마우스를 올리면 설�
   await page.locator('#modal tr[data-factor="houses_nearby"] .rv-info').focus();
   await expect(tip).toHaveText(RISK_VAR_DESCRIPTIONS.houses_nearby!);
   await page.keyboard.press('Escape');
+  expect(h.errors).toEqual([]);
+});
+
+
+test('산불 위험도 창: 위해 H · 노출 X 설명은 ⓘ로, 계산식 줄은 없다(11/27)', async ({ page }) => {
+  const h = await setup(page, 'PARTIAL');
+  await page.locator('#risk-box').click();
+  const popup = page.locator('#risk-pop-body');
+  await expect(popup.locator('tr.rk-grp')).toHaveCount(2);
+  await expect(popup.locator('tr.rk-grp')).not.toContainText(['불이 얼마나', '사람·집이']);
+  await expect(popup.locator('.rk-formula')).toHaveCount(0);
+  await expect(popup).not.toContainText('√');
+  const tip = page.locator('.rv-tip');
+  await popup.locator('tr.rk-grp .rv-info').first().hover();
+  await expect(tip).toHaveText('불이 얼마나 위험한가');
+  await popup.locator('tr.rk-grp .rv-info').nth(1).hover();
+  await expect(tip).toHaveText('사람·집이 얼마나 걸리는가');
+  await page.mouse.move(5, 5);
+  await expect(tip).toBeHidden();
   expect(h.errors).toEqual([]);
 });
